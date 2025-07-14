@@ -33,6 +33,15 @@ import urllib.parse
 import json
 from src.shared.llm_graph_builder_exception import LLMGraphBuilderException
 
+# Task 11: Import enhanced chunking pipeline
+try:
+    from src.enhanced_chunking import get_enhanced_chunks_pipeline, enhanced_processing_chunks_pipeline
+    ENHANCED_CHUNKING_AVAILABLE = True
+    logging.info("Enhanced chunking pipeline imported successfully")
+except ImportError as e:
+    ENHANCED_CHUNKING_AVAILABLE = False
+    logging.warning(f"Enhanced chunking not available: {str(e)}. Falling back to basic chunking.")
+
 warnings.filterwarnings("ignore")
 load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(message)s',level='INFO')
@@ -472,6 +481,12 @@ async def processing_chunks(chunkId_chunkDoc_list,graph,uri, userName, password,
   else:
     graph = create_graph_database_connection(uri, userName, password, database)
   
+  # Task 11: Check for enhanced processing data
+  enhanced_data = None
+  if hasattr(graph, '_enhanced_processing_data') and file_name in graph._enhanced_processing_data:
+    enhanced_data = graph._enhanced_processing_data[file_name]
+    logging.info(f"Enhanced processing data found for {file_name}")
+  
   start_update_embedding = time.time()
   create_chunk_embeddings( graph, chunkId_chunkDoc_list, file_name)
   end_update_embedding = time.time()
@@ -504,15 +519,54 @@ async def processing_chunks(chunkId_chunkDoc_list,graph,uri, userName, password,
   logging.info(f'Time taken to create relationship between chunk and entities: {elapsed_relationship:.2f} seconds')
   latency_processing_chunk["relationship_between_chunk_entity"] = f'{elapsed_relationship:.2f}'
   
+  # Task 11: Process enhanced relationships if available
+  if ENHANCED_CHUNKING_AVAILABLE and enhanced_data:
+    try:
+      enhanced_latency, enhanced_rel_count = enhanced_processing_chunks_pipeline(
+        chunkId_chunkDoc_list=chunkId_chunkDoc_list,
+        relationship_result=enhanced_data.get('relationship_result'),
+        processing_metrics=enhanced_data.get('processing_metrics', {}),
+        graph=graph,
+        uri=uri,
+        userName=userName,
+        password=password,
+        database=database,
+        file_name=file_name,
+        model=model,
+        allowedNodes=allowedNodes,
+        allowedRelationship=allowedRelationship,
+        chunks_to_combine=chunks_to_combine,
+        node_count=node_count,
+        rel_count=rel_count,
+        additional_instructions=additional_instructions
+      )
+      
+      # Merge enhanced processing metrics
+      latency_processing_chunk.update(enhanced_latency)
+      rel_count = enhanced_rel_count
+      
+      logging.info("Enhanced relationship processing completed")
+      
+    except Exception as e:
+      logging.error(f"Enhanced relationship processing failed: {str(e)}")
+      # Continue with normal processing
+  
   graphDb_data_Access = graphDBdataAccess(graph)
   count_response = graphDb_data_Access.update_node_relationship_count(file_name)
   node_count = count_response[file_name].get('nodeCount',"0")
   rel_count = count_response[file_name].get('relationshipCount',"0")
+  
+  # Task 11: Clean up enhanced processing data
+  if hasattr(graph, '_enhanced_processing_data') and file_name in graph._enhanced_processing_data:
+    del graph._enhanced_processing_data[file_name]
+    
   return node_count,rel_count,latency_processing_chunk
 
 def get_chunkId_chunkDoc_list(graph, file_name, pages, token_chunk_size, chunk_overlap, retry_condition):
   if not retry_condition:
     logging.info("Break down file into chunks")
+    
+    # Task 11: Clean pages for processing
     bad_chars = ['"', "\n", "'"]
     for i in range(0,len(pages)):
       text = pages[i].page_content
@@ -522,6 +576,49 @@ def get_chunkId_chunkDoc_list(graph, file_name, pages, token_chunk_size, chunk_o
         else:
           text = text.replace(j, '')
       pages[i]=Document(page_content=str(text), metadata=pages[i].metadata)
+    
+    # Task 11: Use enhanced chunking pipeline if available
+    if ENHANCED_CHUNKING_AVAILABLE:
+      try:
+        total_chunks, chunkId_chunkDoc_list, relationship_result, processing_metrics = get_enhanced_chunks_pipeline(
+          graph=graph,
+          file_name=file_name,
+          pages=pages,
+          token_chunk_size=token_chunk_size,
+          chunk_overlap=chunk_overlap,
+          retry_condition=retry_condition
+        )
+        
+        # Store relationship result and metrics for later use in processing_chunks
+        # We'll use graph metadata to pass this information
+        if hasattr(graph, '_enhanced_processing_data'):
+          graph._enhanced_processing_data = {}
+        else:
+          graph._enhanced_processing_data = {}
+          
+        graph._enhanced_processing_data[file_name] = {
+          'relationship_result': relationship_result,
+          'processing_metrics': processing_metrics
+        }
+        
+        # Create traditional chunk relationships for backward compatibility
+        if relationship_result is None:
+          # Convert chunks to traditional format for create_relation_between_chunks
+          traditional_chunks = []
+          for chunk_data in chunkId_chunkDoc_list:
+            traditional_chunks.append(chunk_data['chunk_doc'])
+          
+          chunkId_chunkDoc_list = create_relation_between_chunks(graph, file_name, traditional_chunks)
+        
+        logging.info(f"Enhanced chunking completed: {total_chunks} chunks created")
+        return total_chunks, chunkId_chunkDoc_list
+        
+      except Exception as e:
+        logging.error(f"Enhanced chunking failed for {file_name}: {str(e)}")
+        logging.info("Falling back to basic chunking")
+        # Fall through to basic chunking
+    
+    # Basic chunking (original implementation)
     create_chunks_obj = CreateChunksofDocument(pages, graph)
     chunks = create_chunks_obj.split_file_into_chunks(token_chunk_size, chunk_overlap)
     chunkId_chunkDoc_list = create_relation_between_chunks(graph,file_name,chunks)
