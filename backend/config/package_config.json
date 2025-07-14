@@ -1,0 +1,34 @@
+{
+  "mortgage_categories": ["NQM", "RTL", "SBC", "CONV"],
+  "default_templates": {
+    "NQM": "NQM_STANDARD",
+    "RTL": "RTL_STANDARD", 
+    "SBC": "SBC_STANDARD",
+    "CONV": "CONV_STANDARD"
+  },
+  "validation_rules": {
+    "min_decision_trees": 1,
+    "required_outcomes": ["APPROVE", "DECLINE", "REFER"],
+    "max_navigation_depth": 5,
+    "min_package_documents": 1,
+    "max_package_documents": 10
+  },
+  "processing_timeouts": {
+    "navigation_extraction": 300,
+    "hierarchical_chunking": 180,
+    "decision_tree_extraction": 240,
+    "package_creation": 30
+  },
+  "chunk_settings": {
+    "target_chunk_size": 1500,
+    "chunk_overlap": 200,
+    "max_chunk_size": 2000,
+    "preserve_boundaries": true
+  },
+  "quality_thresholds": {
+    "navigation_accuracy": 0.95,
+    "decision_completeness": 1.0,
+    "entity_coverage": 0.90,
+    "chunk_coherence": 0.90
+  }
+}

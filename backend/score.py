@@ -35,6 +35,10 @@ from langchain_neo4j import Neo4jGraph
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from dotenv import load_dotenv
+# Task 6: Package Management API imports
+from src.package_manager import PackageManager
+from src.package_versioning import PackageVersionManager, ChangeType
+from src.entities.document_package import PackageCategory, PackageStatus
 load_dotenv(override=True)
 
 logger = CustomLogger()
@@ -1091,6 +1095,1070 @@ async def get_schema_visualization(uri=Form(None), userName=Form(None), password
         return create_api_response("Failed", message=message, error=error_message)
     finally:
         gc.collect()
+
+
+# Task 6: Package Management API Endpoints
+
+@app.post("/packages")
+async def create_package(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    package_name=Form(...),
+    tenant_id=Form(...),
+    category=Form(...),
+    template=Form(None),
+    created_by=Form(None),
+    documents=Form(None),
+    relationships=Form(None),
+    customizations=Form(None)
+):
+    """Create a new document package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize package manager
+        package_manager = PackageManager(graph_db)
+        
+        # Prepare package configuration
+        package_config = {
+            'package_name': package_name,
+            'tenant_id': tenant_id,
+            'category': category,
+            'created_by': created_by or 'api_user'
+        }
+        
+        # Add optional fields
+        if template:
+            package_config['template'] = template
+            
+        # Parse documents if provided
+        if documents:
+            try:
+                package_config['documents'] = json.loads(documents)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid documents JSON format')
+        
+        # Parse relationships if provided 
+        if relationships:
+            try:
+                package_config['relationships'] = json.loads(relationships)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid relationships JSON format')
+                
+        # Parse customizations if provided
+        if customizations:
+            try:
+                package_config['customizations'] = json.loads(customizations)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid customizations JSON format')
+        
+        # Create package
+        package = package_manager.create_package(package_config)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'create_package',
+            'db_url': uri,
+            'package_id': package.package_id,
+            'package_name': package_name,
+            'category': category,
+            'tenant_id': tenant_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'package_id': package.package_id,
+            'package_name': package.package_name,
+            'category': package.category.value,
+            'version': package.version,
+            'status': package.status.value,
+            'created_at': package.created_at.isoformat(),
+            'document_count': len(package.documents),
+            'relationship_count': len(package.relationships),
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package '{package_name}' created successfully with ID: {package.package_id}"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Invalid package configuration: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_package',
+            'package_name': package_name,
+            'category': category,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except LLMGraphBuilderException as e:
+        error_message = str(e)
+        message = f"Package creation failed: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_package',
+            'package_name': package_name,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Unexpected error during package creation: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_package',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in create_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/packages/{package_id}")
+async def get_package(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None), 
+    password=Form(None),
+    database=Form(None)
+):
+    """Retrieve a specific package by ID"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize package manager
+        package_manager = PackageManager(graph_db)
+        
+        # Load package
+        package = package_manager.load_package(package_id)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'get_package',
+            'db_url': uri,
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'package_id': package.package_id,
+            'package_name': package.package_name,
+            'tenant_id': package.tenant_id,
+            'category': package.category.value,
+            'version': package.version,
+            'status': package.status.value,
+            'created_by': package.created_by,
+            'template_type': package.template_type,
+            'created_at': package.created_at.isoformat(),
+            'updated_at': package.updated_at.isoformat(),
+            'template_mappings': package.template_mappings,
+            'validation_rules': package.validation_rules,
+            'documents': [
+                {
+                    'document_id': doc.document_id,
+                    'document_type': doc.document_type,
+                    'document_name': doc.document_name,
+                    'expected_structure': doc.expected_structure,
+                    'required_sections': doc.required_sections,
+                    'optional_sections': doc.optional_sections,
+                    'chunking_strategy': doc.chunking_strategy,
+                    'entity_types': doc.entity_types,
+                    'matrix_configuration': doc.matrix_configuration,
+                    'validation_schema': doc.validation_schema,
+                    'quality_thresholds': doc.quality_thresholds
+                }
+                for doc in package.documents
+            ],
+            'relationships': [
+                {
+                    'from_document': rel.from_document,
+                    'to_document': rel.to_document,
+                    'relationship_type': rel.relationship_type,
+                    'metadata': rel.metadata
+                }
+                for rel in package.relationships
+            ],
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package '{package_id}' retrieved successfully"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Package not found: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'get_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to retrieve package: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'get_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in get_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/packages")
+async def list_packages(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    tenant_id=Form(None),
+    category=Form(None),
+    status=Form(None)
+):
+    """List packages with optional filtering"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize package manager
+        package_manager = PackageManager(graph_db)
+        
+        # Parse filters
+        category_filter = PackageCategory(category) if category else None
+        status_filter = PackageStatus(status) if status else None
+        
+        # List packages
+        packages = package_manager.list_packages(tenant_id, category_filter, status_filter)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'list_packages',
+            'db_url': uri,
+            'tenant_id': tenant_id,
+            'category': category,
+            'status': status,
+            'package_count': len(packages),
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'packages': packages,
+            'total_count': len(packages),
+            'filters': {
+                'tenant_id': tenant_id,
+                'category': category,
+                'status': status
+            },
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Found {len(packages)} packages"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Invalid filter parameters: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'list_packages',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to list packages: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'list_packages',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in list_packages: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.put("/packages/{package_id}")
+async def update_package(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    package_name=Form(None),
+    status=Form(None),
+    documents=Form(None),
+    relationships=Form(None),
+    version_type=Form('PATCH')
+):
+    """Update an existing package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize package manager
+        package_manager = PackageManager(graph_db)
+        
+        # Prepare updates
+        updates = {}
+        
+        if package_name:
+            updates['package_name'] = package_name
+            
+        if status:
+            updates['status'] = status
+            
+        if documents:
+            try:
+                updates['documents'] = json.loads(documents)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid documents JSON format')
+        
+        if relationships:
+            try:
+                updates['relationships'] = json.loads(relationships)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid relationships JSON format')
+                
+        if version_type:
+            updates['version_type'] = version_type
+        
+        # Update package
+        package = package_manager.update_package(package_id, updates)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'update_package',
+            'db_url': uri,
+            'package_id': package_id,
+            'new_version': package.version,
+            'version_type': version_type,
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'package_id': package.package_id,
+            'package_name': package.package_name,
+            'version': package.version,
+            'status': package.status.value,
+            'updated_at': package.updated_at.isoformat(),
+            'document_count': len(package.documents),
+            'relationship_count': len(package.relationships),
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package '{package_id}' updated successfully to version {package.version}"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Package update failed: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'update_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to update package: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'update_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in update_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.delete("/packages/{package_id}")
+async def delete_package(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None)
+):
+    """Delete a package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize package manager
+        package_manager = PackageManager(graph_db)
+        
+        # Delete package
+        success = package_manager.delete_package(package_id)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'delete_package',
+            'db_url': uri,
+            'package_id': package_id,
+            'success': success,
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        response_data = {
+            'package_id': package_id,
+            'deleted': success,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package '{package_id}' deleted successfully" if success else f"Failed to delete package '{package_id}'"
+        status = 'Success' if success else 'Failed'
+        return create_api_response(status, message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Cannot delete package: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'delete_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to delete package: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'delete_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in delete_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/packages/{package_id}/clone")
+async def clone_package(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    new_name=Form(...),
+    category=Form(None),
+    created_by=Form(None),
+    customizations=Form(None)
+):
+    """Clone an existing package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize package manager
+        package_manager = PackageManager(graph_db)
+        
+        # Prepare modifications
+        modifications = {}
+        
+        if category:
+            modifications['category'] = category
+            
+        if created_by:
+            modifications['created_by'] = created_by
+            
+        if customizations:
+            try:
+                modifications['customizations'] = json.loads(customizations)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid customizations JSON format')
+        
+        # Clone package
+        cloned_package = package_manager.clone_package(package_id, new_name, modifications)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'clone_package',
+            'db_url': uri,
+            'source_package_id': package_id,
+            'cloned_package_id': cloned_package.package_id,
+            'new_name': new_name,
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'source_package_id': package_id,
+            'cloned_package_id': cloned_package.package_id,
+            'package_name': cloned_package.package_name,
+            'category': cloned_package.category.value,
+            'version': cloned_package.version,
+            'status': cloned_package.status.value,
+            'created_at': cloned_package.created_at.isoformat(),
+            'document_count': len(cloned_package.documents),
+            'relationship_count': len(cloned_package.relationships),
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package '{package_id}' cloned successfully as '{cloned_package.package_id}'"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Package cloning failed: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'clone_package',
+            'source_package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to clone package: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'clone_package',
+            'source_package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in clone_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/packages/{package_id}/versions")
+async def get_package_versions(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None)
+):
+    """Get version history for a package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize version manager
+        version_manager = PackageVersionManager(graph_db)
+        
+        # Get version history
+        history = version_manager.get_version_history(package_id)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'get_package_versions',
+            'db_url': uri,
+            'package_id': package_id,
+            'version_count': len(history),
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        versions_data = [
+            {
+                'version': record.version,
+                'change_type': record.change_type.value,
+                'changes': record.changes,
+                'created_at': record.created_at.isoformat(),
+                'created_by': record.created_by,
+                'metadata': record.metadata
+            }
+            for record in history
+        ]
+        
+        response_data = {
+            'package_id': package_id,
+            'versions': versions_data,
+            'total_versions': len(history),
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Found {len(history)} versions for package '{package_id}'"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to get version history for package: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'get_package_versions',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in get_package_versions: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/packages/{package_id}/rollback")
+async def rollback_package(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    target_version=Form(...),
+    created_by=Form(None)
+):
+    """Rollback package to a previous version"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize version manager
+        version_manager = PackageVersionManager(graph_db)
+        
+        # Perform rollback
+        restored_package = version_manager.rollback_version(
+            package_id, 
+            target_version, 
+            created_by or userName or 'api_user'
+        )
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'rollback_package',
+            'db_url': uri,
+            'package_id': package_id,
+            'target_version': target_version,
+            'new_version': restored_package.version,
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'package_id': package_id,
+            'target_version': target_version,
+            'new_version': restored_package.version,
+            'package_name': restored_package.package_name,
+            'status': restored_package.status.value,
+            'updated_at': restored_package.updated_at.isoformat(),
+            'document_count': len(restored_package.documents),
+            'relationship_count': len(restored_package.relationships),
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package '{package_id}' rolled back to version {target_version} (new version: {restored_package.version})"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Rollback failed: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'rollback_package',
+            'package_id': package_id,
+            'target_version': target_version,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to rollback package: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'rollback_package',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in rollback_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/packages/{package_id}/diff")
+async def diff_package_versions(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    from_version=Form(...),
+    to_version=Form(...)
+):
+    """Compare two versions of a package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Initialize version manager
+        version_manager = PackageVersionManager(graph_db)
+        
+        # Get version diff
+        diff = version_manager.diff_versions(package_id, from_version, to_version)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'diff_package_versions',
+            'db_url': uri,
+            'package_id': package_id,
+            'from_version': from_version,
+            'to_version': to_version,
+            'has_changes': diff.has_changes(),
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        response_data = {
+            'package_id': package_id,
+            'from_version': from_version,
+            'to_version': to_version,
+            'has_changes': diff.has_changes(),
+            'added_documents': diff.added_documents,
+            'removed_documents': diff.removed_documents,
+            'modified_documents': diff.modified_documents,
+            'structural_changes': diff.structural_changes,
+            'relationship_changes': diff.relationship_changes,
+            'summary': {
+                'documents_added': len(diff.added_documents),
+                'documents_removed': len(diff.removed_documents),
+                'documents_modified': len(diff.modified_documents),
+                'structural_changes_count': len(diff.structural_changes),
+                'relationship_changes_count': len(diff.relationship_changes)
+            },
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Version comparison complete for package '{package_id}' between {from_version} and {to_version}"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Version comparison failed: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'diff_package_versions',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to compare package versions: {package_id}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'diff_package_versions',
+            'package_id': package_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in diff_package_versions: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/packages/validate")
+async def validate_package_config(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    package_name=Form(...),
+    tenant_id=Form(...),
+    category=Form(...),
+    documents=Form(None),
+    relationships=Form(None)
+):
+    """Validate package configuration without creating"""
+    try:
+        start = time.time()
+        
+        # Prepare package configuration for validation
+        package_config = {
+            'package_name': package_name,
+            'tenant_id': tenant_id,
+            'category': category,
+            'created_by': 'validation_user'
+        }
+        
+        # Parse documents if provided
+        if documents:
+            try:
+                package_config['documents'] = json.loads(documents)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid documents JSON format')
+        
+        # Parse relationships if provided
+        if relationships:
+            try:
+                package_config['relationships'] = json.loads(relationships)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid relationships JSON format')
+        
+        # Create temporary package for validation (in memory only)
+        from src.entities.document_package import DocumentPackage, validate_package
+        import uuid
+        
+        # Generate temporary ID for validation
+        category_enum = PackageCategory(category)
+        temp_package_id = f"temp_{category_enum.value.lower()}_{uuid.uuid4().hex[:8]}"
+        
+        # Create temporary package
+        temp_package = DocumentPackage(
+            package_id=temp_package_id,
+            package_name=package_name,
+            tenant_id=tenant_id,
+            category=category_enum,
+            version="1.0.0",
+            status=PackageStatus.DRAFT,
+            created_by='validation_user'
+        )
+        
+        # Add documents if provided
+        if 'documents' in package_config:
+            from src.entities.document_package import DocumentDefinition
+            for doc_config in package_config['documents']:
+                doc = DocumentDefinition(
+                    document_id=doc_config.get('document_id', f"doc_{uuid.uuid4().hex[:8]}"),
+                    document_type=doc_config['document_type'],
+                    document_name=doc_config['document_name'],
+                    expected_structure=doc_config.get('expected_structure', {}),
+                    required_sections=doc_config.get('required_sections', []),
+                    optional_sections=doc_config.get('optional_sections', []),
+                    chunking_strategy=doc_config.get('chunking_strategy', 'hierarchical'),
+                    entity_types=doc_config.get('entity_types', []),
+                    matrix_configuration=doc_config.get('matrix_configuration'),
+                    validation_schema=doc_config.get('validation_schema', {}),
+                    quality_thresholds=doc_config.get('quality_thresholds', {})
+                )
+                temp_package.add_document(doc)
+        
+        # Add relationships if provided
+        if 'relationships' in package_config:
+            from src.entities.document_package import PackageRelationship
+            for rel_config in package_config['relationships']:
+                rel = PackageRelationship(
+                    from_document=rel_config['from_document'],
+                    to_document=rel_config['to_document'],
+                    relationship_type=rel_config['relationship_type'],
+                    metadata=rel_config.get('metadata', {})
+                )
+                temp_package.relationships.append(rel)
+        
+        # Validate package
+        validation_errors = validate_package(temp_package)
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Log API call
+        json_obj = {
+            'api_name': 'validate_package_config',
+            'db_url': uri,
+            'package_name': package_name,
+            'category': category,
+            'is_valid': len(validation_errors) == 0,
+            'error_count': len(validation_errors),
+            'logging_time': formatted_time(datetime.now(timezone.utc)),
+            'elapsed_api_time': f'{elapsed_time:.2f}',
+            'userName': userName,
+            'database': database
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Prepare response data
+        is_valid = len(validation_errors) == 0
+        response_data = {
+            'is_valid': is_valid,
+            'validation_errors': validation_errors,
+            'package_name': package_name,
+            'category': category,
+            'document_count': len(temp_package.documents),
+            'relationship_count': len(temp_package.relationships),
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        if is_valid:
+            message = f"Package configuration is valid"
+            status = 'Success'
+        else:
+            message = f"Package configuration has {len(validation_errors)} validation errors"
+            status = 'Failed'
+            
+        return create_api_response(status, message=message, data=response_data)
+        
+    except ValueError as e:
+        error_message = str(e)
+        message = f"Validation failed: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'validate_package_config',
+            'package_name': package_name,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        return create_api_response('Failed', message=message, error=error_message)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Validation error: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'validate_package_config',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in validate_package_config: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
 
 if __name__ == "__main__":
     uvicorn.run(app)
