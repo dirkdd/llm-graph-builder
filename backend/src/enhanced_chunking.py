@@ -15,7 +15,7 @@ from .semantic_chunker import SemanticChunker, ChunkingResult, SemanticChunk, Ch
 from .chunk_relationships import ChunkRelationshipManager, RelationshipDetectionResult
 from .entities.navigation_models import HierarchicalChunk, ChunkRelationship
 from .graphDB_dataAccess import graphDBdataAccess
-from .shared.common_fn import create_relation_between_chunks
+from .make_relationships import create_relation_between_chunks
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level='INFO')
 

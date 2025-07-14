@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Local Development
 - **Frontend development**: `cd frontend && yarn && yarn run dev` (runs on port 8080)
-- **Backend development**: `cd backend && python -m venv envName && source envName/bin/activate && pip install -r requirements.txt && uvicorn score:app --reload` (runs on port 8000)
+- **Backend development**: `cd backend && ./activate_env.sh && source venv/bin/activate && uvicorn score:app --reload` (runs on port 8000)
 - **Docker development**: `docker-compose up` (full stack with database)
 
 ### Frontend Commands
@@ -16,9 +16,92 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Type check**: `cd frontend && tsc`
 
 ### Backend Commands
-- **Run server**: `cd backend && uvicorn score:app --reload`
-- **Python environment**: Use virtual environment and install from `requirements.txt`
+- **Environment setup**: `cd backend && ./activate_env.sh` (one-time setup)
+- **Activate environment**: `cd backend && source venv/bin/activate` (before each session)
+- **Run server**: `uvicorn score:app --reload`
+- **Run tests**: `pytest tests/ -v`
+- **Install new packages**: `pip install package_name && pip freeze > requirements.txt`
+- **Python environment**: Virtual environment with all dependencies from `requirements.txt` + `constraints.txt`
 - **Main entry point**: `backend/score.py` (FastAPI application)
+
+### IMPORTANT: Python Command Usage for Claude Code
+**CRITICAL**: Always use the following patterns to avoid command errors and reduce retry attempts:
+
+1. **Use `python3` instead of `python`**: This system requires `python3` command
+2. **Always activate venv first**: Never run Python commands without activating the virtual environment
+3. **Proper command patterns**:
+   ```bash
+   # CORRECT: Always use this pattern
+   cd backend && source venv/bin/activate && python3 script.py
+   
+   # WRONG: These will fail
+   python script.py                    # Missing python3
+   cd backend && python3 script.py     # Missing venv activation
+   ```
+
+4. **Testing commands**:
+   ```bash
+   # CORRECT
+   cd backend && source venv/bin/activate && python3 -m pytest tests/ -v
+   
+   # CORRECT (shorthand when venv is active)
+   pytest tests/ -v
+   ```
+
+5. **Running Python scripts**:
+   ```bash
+   # CORRECT
+   cd backend && source venv/bin/activate && python3 -c "import langchain; print('OK')"
+   
+   # CORRECT for module execution
+   cd backend && source venv/bin/activate && python3 -m uvicorn score:app --reload
+   ```
+
+**Remember**: Every Python command must be prefixed with `cd backend && source venv/bin/activate &&` unless venv is already activated in the current session.
+
+### Claude Code Timeout Management
+**For long-running operations** (tests, package installs, builds), use these strategies:
+
+1. **Bash Tool Timeout Parameter**: Set explicit timeouts for long operations
+   ```bash
+   # For package installation (up to 10 minutes)
+   timeout: 600000  # milliseconds
+   
+   # For test runs (up to 5 minutes) 
+   timeout: 300000  # milliseconds
+   ```
+
+2. **Break Down Long Operations**: Split complex tasks into smaller chunks
+   ```bash
+   # Instead of: pip install -r requirements.txt (might timeout)
+   # Do: Install in batches
+   pip install fastapi uvicorn pytest
+   pip install langchain langchain-openai
+   pip install neo4j-rust-ext graphdatascience
+   ```
+
+3. **Use Pre-built Environment**: Keep `venv/` directory to avoid reinstalling
+   ```bash
+   # First time only
+   ./activate_env.sh
+   
+   # Subsequent times (faster)
+   source venv/bin/activate
+   ```
+
+4. **Test Subset Strategy**: Run specific test files instead of entire suite
+   ```bash
+   # Instead of: pytest tests/ -v (might timeout)
+   # Run specific tests:
+   pytest tests/test_specific.py -v
+   pytest tests/test_navigation.py::test_function -v
+   ```
+
+5. **Environment Variables**: Set timeout preferences
+   ```bash
+   # In your shell session
+   export CLAUDE_TIMEOUT=600000  # 10 minutes
+   ```
 
 ## Architecture Overview
 
@@ -89,15 +172,212 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Testing and Quality
 
+### Test-Driven Development (TDD) Methodology
+
+**CRITICAL**: Always follow TDD principles when developing new features or fixing bugs in this codebase.
+
+#### 🔴 **RED Phase: Write Failing Tests First**
+```bash
+# 1. Create test file for new functionality
+# Example: tests/test_new_feature.py
+
+# 2. Write failing test that defines expected behavior
+cd backend && source venv/bin/activate && python3 -m pytest tests/test_new_feature.py -v
+# Expected: Test should FAIL (red phase)
+```
+
+#### 🟢 **GREEN Phase: Make Tests Pass**
+```bash
+# 1. Implement minimal code to make tests pass
+# 2. Run tests to verify they pass
+cd backend && source venv/bin/activate && python3 -m pytest tests/test_new_feature.py -v
+# Expected: Test should PASS (green phase)
+```
+
+#### 🔵 **REFACTOR Phase: Improve Code Quality**
+```bash
+# 1. Refactor implementation while keeping tests green
+# 2. Run full test suite to ensure no regressions
+cd backend && source venv/bin/activate && python3 -m pytest tests/ -v
+# Expected: All tests should continue to PASS
+```
+
+#### **TDD Workflow for New Features**
+
+1. **Write Test First** (Red Phase):
+   ```python
+   # tests/test_new_feature.py
+   def test_new_feature_functionality():
+       # Arrange: Set up test data
+       # Act: Call the function/method
+       # Assert: Verify expected behavior
+       assert expected_result == actual_result
+   ```
+
+2. **Run Test to Confirm Failure**:
+   ```bash
+   cd backend && source venv/bin/activate && python3 -m pytest tests/test_new_feature.py::test_new_feature_functionality -v
+   # Should fail - this confirms test is testing the right thing
+   ```
+
+3. **Implement Minimal Code** (Green Phase):
+   ```python
+   # src/new_feature.py
+   def new_feature_functionality():
+       # Minimal implementation to make test pass
+       return expected_result
+   ```
+
+4. **Run Test to Confirm Pass**:
+   ```bash
+   cd backend && source venv/bin/activate && python3 -m pytest tests/test_new_feature.py::test_new_feature_functionality -v
+   # Should pass - green phase achieved
+   ```
+
+5. **Refactor and Run All Tests** (Blue Phase):
+   ```bash
+   cd backend && source venv/bin/activate && python3 -m pytest tests/ -v
+   # All tests should pass after refactoring
+   ```
+
+#### **TDD for Bug Fixes**
+
+1. **Write Test that Reproduces Bug**:
+   ```python
+   def test_bug_reproduction():
+       # Create test that fails due to the bug
+       result = buggy_function(input_that_causes_bug)
+       assert result == expected_correct_result  # This should fail
+   ```
+
+2. **Confirm Test Fails**:
+   ```bash
+   cd backend && source venv/bin/activate && python3 -m pytest tests/test_bug_fix.py::test_bug_reproduction -v
+   ```
+
+3. **Fix Bug and Verify Test Passes**:
+   ```bash
+   cd backend && source venv/bin/activate && python3 -m pytest tests/test_bug_fix.py::test_bug_reproduction -v
+   ```
+
+#### **TDD Test Categories**
+
+1. **Unit Tests**: Test individual functions/classes
+   ```bash
+   # Test single function
+   pytest tests/test_navigation_extractor.py::TestNavigationExtractor::test_initialization -v
+   ```
+
+2. **Integration Tests**: Test component interactions
+   ```bash
+   # Test multiple components working together
+   pytest tests/test_task_11_integration.py -v
+   ```
+
+3. **Validation Tests**: Test acceptance criteria
+   ```bash
+   # Run validation scripts
+   python3 validate_task_14.py
+   ```
+
+#### **TDD Best Practices for This Codebase**
+
+1. **Follow Existing Test Patterns**:
+   - Use `unittest.TestCase` for consistency
+   - Mock external dependencies (LLM, database)
+   - Create sample data in `setUp()` methods
+
+2. **Test File Naming Convention**:
+   ```
+   tests/test_[module_name].py
+   tests/test_[feature_name].py
+   tests/[integration_test_name].py
+   ```
+
+3. **Test Method Naming**:
+   ```python
+   def test_[function_name]_[scenario]_[expected_outcome]():
+       # Example: test_extract_entities_with_valid_input_returns_entities()
+   ```
+
+4. **Use Appropriate Assertions**:
+   ```python
+   # Specific assertions for different scenarios
+   self.assertEqual(actual, expected)          # Exact match
+   self.assertTrue(condition)                  # Boolean check
+   self.assertIsNotNone(result)               # Null check
+   self.assertRaises(Exception, function)     # Exception testing
+   ```
+
+5. **Mock External Dependencies**:
+   ```python
+   @patch('src.module.external_dependency')
+   def test_with_mocked_dependency(self, mock_dependency):
+       # Test internal logic without external calls
+   ```
+
+#### **TDD Commands Quick Reference**
+
+```bash
+# Run single test (fastest feedback)
+cd backend && source venv/bin/activate && python3 -m pytest tests/test_file.py::test_method -v
+
+# Run test file
+cd backend && source venv/bin/activate && python3 -m pytest tests/test_file.py -v
+
+# Run all tests (before committing)
+cd backend && source venv/bin/activate && python3 -m pytest tests/ -v
+
+# Run tests with coverage
+cd backend && source venv/bin/activate && python3 -m pytest tests/ --cov=src --cov-report=html
+
+# Run tests for specific feature
+cd backend && source venv/bin/activate && python3 -m pytest tests/ -k "navigation" -v
+```
+
+#### **TDD Validation Workflow**
+
+1. **Before Starting Development**:
+   ```bash
+   # Ensure all existing tests pass
+   cd backend && source venv/bin/activate && python3 -m pytest tests/ -v
+   ```
+
+2. **During Development** (Red-Green-Refactor cycle):
+   ```bash
+   # Write failing test
+   python3 -m pytest tests/test_new.py::test_feature -v  # Should FAIL
+   
+   # Implement feature
+   python3 -m pytest tests/test_new.py::test_feature -v  # Should PASS
+   
+   # Run full suite after refactoring
+   python3 -m pytest tests/ -v  # All should PASS
+   ```
+
+3. **Before Committing**:
+   ```bash
+   # Ensure no regressions
+   cd backend && source venv/bin/activate && python3 -m pytest tests/ -v
+   
+   # Run validation scripts
+   python3 validate_task_12.py
+   python3 validate_task_13.py
+   python3 validate_task_14.py
+   ```
+
 ### Frontend
 - ESLint and Prettier configured for code formatting
 - TypeScript for type safety
 - Husky pre-commit hooks for linting
+- Jest/Vitest for unit testing (follow TDD principles)
 
 ### Backend  
 - Python virtual environment required
 - Type hints throughout codebase
 - Logging configured for debugging and monitoring
+- Pytest for testing framework (mandatory TDD approach)
+- Mock external dependencies for unit tests
 
 ## File Processing Pipeline
 
@@ -177,4 +457,8 @@ Each phase follows an iterative pattern:
 ## Development Best Practices
 
 ### Version Control
-- We should make it a rule to create a git commit and push after every successful step completion this way we have an easy way to restore if things get messed up
+- **Commit frequently**: Create git commits after completing discrete tasks or milestones
+- **Descriptive messages**: Use clear, descriptive commit messages following conventional format
+- **Feature branches**: Use feature branches for new development, merge to main when stable
+- **Push regularly**: Push commits to maintain backup and enable collaboration
+- **Atomic commits**: Keep commits focused on single logical changes for easier debugging and rollback
