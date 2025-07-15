@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Box, Paper, Alert, Typography } from '@mui/material';
+import { Box, Paper, Alert, Typography, Button } from '@mui/material';
+import { PlayArrowIcon } from '@neo4j-ndl/react/icons';
 import { PackageActionBar } from './PackageActionBar';
 import { HierarchicalPackageTable } from './HierarchicalPackageTable';
 import { ContextualDropZone } from './ContextualDropZone';
@@ -12,8 +13,9 @@ import {
   PackageHierarchy
 } from '../../types';
 import { useFileContext } from '../../context/UsersFiles';
-import { showSuccessToast, showErrorToast } from '../../utils/Toasts';
+import { showSuccessToast, showErrorToast, showNormalToast } from '../../utils/Toasts';
 import { v4 as uuidv4 } from 'uuid';
+import { extractAPI } from '../../utils/FileAPI';
 
 interface PackageWorkspaceProps {
   onFilesUpload: (files: File[], context: PackageSelectionContext) => void;
@@ -24,7 +26,16 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
   onFilesUpload,
   className
 }) => {
-  const { filesData } = useFileContext();
+  const { 
+    filesData, 
+    selectedNodes, 
+    selectedRels, 
+    selectedTokenChunkSize, 
+    selectedChunk_overlap, 
+    selectedChunks_to_combine,
+    model,
+    additionalInstructions
+  } = useFileContext();
   const [packageModeEnabled, setPackageModeEnabled] = useState(true);
   const [selectionContext, setSelectionContext] = useState<PackageSelectionContext>({
     selectionType: 'none'
@@ -36,6 +47,11 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
     totalCategories: 0,
     totalProducts: 0
   });
+  
+  // Package processing state
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<{[fileId: string]: string}>({});
+  const [processingResults, setProcessingResults] = useState<any>(null);
 
   // Package persistence functions
   const loadPackagesFromStorage = useCallback(() => {
@@ -504,6 +520,186 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
     showSuccessToast('Import functionality coming soon');
   }, []);
 
+  // Package processing functions
+  const processPackageFile = useCallback(async (file: CustomFile) => {
+    try {
+      setProcessingStatus(prev => ({ ...prev, [file.id]: 'Processing' }));
+
+      // Update package hierarchy to show processing status
+      setPackageHierarchy(prev => {
+        const updatedCategories = { ...prev.categories };
+        Object.values(updatedCategories).forEach(category => {
+          category.products.forEach(product => {
+            const fileIndex = product.documents.findIndex(f => f.id === file.id);
+            if (fileIndex !== -1) {
+              product.documents[fileIndex] = {
+                ...product.documents[fileIndex],
+                status: 'Processing'
+              };
+            }
+          });
+        });
+        return { ...prev, categories: updatedCategories };
+      });
+
+      // Call the extraction API with package-aware processing
+      const apiResponse = await extractAPI(
+        file.model || model,
+        file.fileSource,
+        file.retryOption ?? '',
+        file.sourceUrl,
+        localStorage.getItem('accesskey'),
+        atob(localStorage.getItem('secretkey') ?? ''),
+        file.name ?? '',
+        file.gcsBucket ?? '',
+        file.gcsBucketFolder ?? '',
+        selectedNodes.map(l => l.value),
+        selectedRels.map(t => t.value),
+        selectedTokenChunkSize,
+        selectedChunk_overlap,
+        selectedChunks_to_combine,
+        file.googleProjectId,
+        file.language,
+        file.accessToken,
+        `${additionalInstructions || ''}\n\nPACKAGE CONTEXT: Processing as part of package "${file.package_name}". Document type: ${file.document_type}. Use hierarchical chunking with package-aware entity extraction.`
+      );
+
+      if (apiResponse?.status === 'Failed') {
+        throw new Error(JSON.stringify({
+          error: apiResponse.error,
+          message: apiResponse.message,
+          fileName: apiResponse.file_name
+        }));
+      }
+
+      // Update package hierarchy with successful processing results
+      setPackageHierarchy(prev => {
+        const updatedCategories = { ...prev.categories };
+        Object.values(updatedCategories).forEach(category => {
+          category.products.forEach(product => {
+            const fileIndex = product.documents.findIndex(f => f.id === file.id);
+            if (fileIndex !== -1) {
+              const apiRes = apiResponse?.data;
+              product.documents[fileIndex] = {
+                ...product.documents[fileIndex],
+                status: apiRes?.status || 'Completed',
+                nodesCount: apiRes?.nodeCount || 0,
+                relationshipsCount: apiRes?.relationshipCount || 0,
+                processingTotalTime: apiRes?.processingTime?.toFixed(2) || '0'
+              };
+            }
+          });
+        });
+        return { ...prev, categories: updatedCategories };
+      });
+
+      setProcessingStatus(prev => ({ ...prev, [file.id]: 'Completed' }));
+      showSuccessToast(`${file.name} processed successfully`);
+
+      return { success: true, data: apiResponse?.data };
+    } catch (error: any) {
+      setProcessingStatus(prev => ({ ...prev, [file.id]: 'Failed' }));
+      
+      // Update package hierarchy with failed status
+      setPackageHierarchy(prev => {
+        const updatedCategories = { ...prev.categories };
+        Object.values(updatedCategories).forEach(category => {
+          category.products.forEach(product => {
+            const fileIndex = product.documents.findIndex(f => f.id === file.id);
+            if (fileIndex !== -1) {
+              product.documents[fileIndex] = {
+                ...product.documents[fileIndex],
+                status: 'Failed',
+                errorMessage: error.message || 'Processing failed'
+              };
+            }
+          });
+        });
+        return { ...prev, categories: updatedCategories };
+      });
+
+      showErrorToast(`Failed to process ${file.name}: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }, [model, selectedNodes, selectedRels, selectedTokenChunkSize, selectedChunk_overlap, selectedChunks_to_combine, additionalInstructions]);
+
+  const handleProcessPackage = useCallback(async () => {
+    if (Object.keys(packageHierarchy.categories).length === 0) {
+      showErrorToast('No package data to process');
+      return;
+    }
+
+    // Get all files from the package
+    const allFiles: CustomFile[] = [];
+    Object.values(packageHierarchy.categories).forEach(category => {
+      category.products.forEach(product => {
+        allFiles.push(...product.documents);
+      });
+    });
+
+    if (allFiles.length === 0) {
+      showErrorToast('No files to process in package');
+      return;
+    }
+
+    setIsProcessing(true);
+    showNormalToast(`Starting package processing: ${allFiles.length} files`);
+
+    const results = [];
+    let successCount = 0;
+    let failureCount = 0;
+
+    try {
+      // Process files sequentially to avoid overwhelming the API
+      for (const file of allFiles) {
+        if (file.status === 'New' || file.status === 'Ready to Reprocess') {
+          const result = await processPackageFile(file);
+          results.push({ file: file.name, result });
+          
+          if (result.success) {
+            successCount++;
+          } else {
+            failureCount++;
+          }
+        }
+      }
+
+      // Set processing results
+      setProcessingResults({
+        totalFiles: allFiles.length,
+        processedFiles: results.length,
+        successCount,
+        failureCount,
+        results
+      });
+
+      if (successCount > 0) {
+        showSuccessToast(`Package processing completed: ${successCount} successful, ${failureCount} failed`);
+      } else {
+        showErrorToast('Package processing failed for all files');
+      }
+    } catch (error) {
+      console.error('Package processing error:', error);
+      showErrorToast('Package processing failed unexpectedly');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [packageHierarchy, processPackageFile]);
+
+  // Check if package has files ready to process
+  const canProcessPackage = useMemo(() => {
+    if (isProcessing) return false;
+    
+    const allFiles: CustomFile[] = [];
+    Object.values(packageHierarchy.categories).forEach(category => {
+      category.products.forEach(product => {
+        allFiles.push(...product.documents);
+      });
+    });
+
+    return allFiles.some(file => file.status === 'New' || file.status === 'Ready to Reprocess');
+  }, [packageHierarchy, isProcessing]);
+
   const getCategoryColor = (type: string): 'primary' | 'secondary' | 'success' | 'warning' => {
     const colors = {
       'NQM': 'primary' as const,
@@ -609,12 +805,28 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
         </Box>
       </Box>
 
-      {/* Package Statistics */}
+      {/* Package Statistics & Processing */}
       {packageModeEnabled && Object.keys(packageHierarchy.categories).length > 0 && (
         <Box mt={2}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" sx={{ mb: 1 }}>Package Overview</Typography>
-            <Box display="flex" gap={4}>
+            <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
+              <Typography variant="h6">Package Overview</Typography>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<PlayArrowIcon />}
+                onClick={handleProcessPackage}
+                disabled={!canProcessPackage}
+                sx={{ 
+                  minWidth: '160px',
+                  height: '40px'
+                }}
+              >
+                {isProcessing ? 'Processing...' : 'Process Package'}
+              </Button>
+            </Box>
+            
+            <Box display="flex" gap={4} mb={2}>
               <Box>
                 <Typography variant="body2" color="text.secondary">Categories</Typography>
                 <Typography variant="h6">{packageHierarchy.totalCategories}</Typography>
@@ -634,6 +846,35 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
                 </Typography>
               </Box>
             </Box>
+
+            {/* Processing Status */}
+            {isProcessing && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                <Typography variant="body2">
+                  <strong>Processing Package...</strong><br />
+                  Files are being processed with package-aware hierarchical chunking and enhanced entity extraction.
+                </Typography>
+              </Alert>
+            )}
+
+            {/* Processing Results */}
+            {processingResults && (
+              <Alert severity={processingResults.failureCount > 0 ? 'warning' : 'success'} sx={{ mt: 2 }}>
+                <Typography variant="body2">
+                  <strong>Processing Complete:</strong><br />
+                  {processingResults.successCount} successful, {processingResults.failureCount} failed out of {processingResults.processedFiles} files processed
+                </Typography>
+              </Alert>
+            )}
+
+            {/* Package Processing Info */}
+            {canProcessPackage && !isProcessing && (
+              <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
+                <Typography variant="body2">
+                  <strong>Ready to Process:</strong> This package contains files that can be processed with package-aware extraction, including hierarchical chunking and enhanced entity relationships.
+                </Typography>
+              </Alert>
+            )}
           </Paper>
         </Box>
       )}
