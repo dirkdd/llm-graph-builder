@@ -16,14 +16,19 @@ import { useFileContext } from '../../context/UsersFiles';
 import { showSuccessToast, showErrorToast, showNormalToast } from '../../utils/Toasts';
 import { v4 as uuidv4 } from 'uuid';
 import { extractAPI } from '../../utils/FileAPI';
+import { PackageResultsViewer } from '../PackageProcessing/PackageResultsViewer';
 
 interface PackageWorkspaceProps {
   onFilesUpload: (files: File[], context: PackageSelectionContext) => void;
+  onStartChat?: (packageContext: any) => void;
+  onViewGraph?: (packageId: string) => void;
   className?: string;
 }
 
 export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
   onFilesUpload,
+  onStartChat,
+  onViewGraph,
   className
 }) => {
   const { 
@@ -52,6 +57,7 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<{[fileId: string]: string}>({});
   const [processingResults, setProcessingResults] = useState<any>(null);
+  const [showResults, setShowResults] = useState(false);
 
   // Package persistence functions
   const loadPackagesFromStorage = useCallback(() => {
@@ -664,14 +670,81 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
         }
       }
 
-      // Set processing results
-      setProcessingResults({
+      // Create comprehensive results object for PackageResultsViewer
+      const packageName = Object.values(packageHierarchy.categories)[0]?.name || 'Unnamed Package';
+      const totalNodes = results.reduce((sum, r) => sum + (r.result.data?.nodeCount || 0), 0);
+      const totalRelationships = results.reduce((sum, r) => sum + (r.result.data?.relationshipCount || 0), 0);
+      const totalProcessingTime = results.reduce((sum, r) => sum + (r.result.data?.processingTime || 0), 0);
+
+      // Calculate document type stats
+      const documentTypeStats = ['Guidelines', 'Matrix', 'Supporting', 'Other'].map(type => {
+        const typeFiles = allFiles.filter(f => f.document_type === type);
+        const typeResults = results.filter(r => allFiles.find(f => f.name === r.file)?.document_type === type);
+        return {
+          type,
+          count: typeFiles.length,
+          nodesCount: typeResults.reduce((sum, r) => sum + (r.result.data?.nodeCount || 0), 0),
+          relationshipsCount: typeResults.reduce((sum, r) => sum + (r.result.data?.relationshipCount || 0), 0),
+          completedCount: typeResults.filter(r => r.result.success).length,
+          failedCount: typeResults.filter(r => !r.result.success).length
+        };
+      }).filter(stat => stat.count > 0);
+
+      // Calculate category stats
+      const categoryStats = Object.values(packageHierarchy.categories).map(category => ({
+        categoryName: category.name,
+        categoryType: category.type,
+        filesCount: category.products.reduce((sum, p) => sum + p.documents.length, 0),
+        nodesCount: category.products.reduce((sum, p) => 
+          sum + p.documents.reduce((docSum, doc) => docSum + (doc.nodesCount || 0), 0), 0
+        ),
+        relationshipsCount: category.products.reduce((sum, p) => 
+          sum + p.documents.reduce((docSum, doc) => docSum + (doc.relationshipsCount || 0), 0), 0
+        ),
+        completedFiles: category.products.reduce((sum, p) => 
+          sum + p.documents.filter(doc => doc.status === 'Completed').length, 0
+        ),
+        products: category.products.map(product => ({
+          productName: product.name,
+          filesCount: product.documents.length,
+          nodesCount: product.documents.reduce((sum, doc) => sum + (doc.nodesCount || 0), 0),
+          relationshipsCount: product.documents.reduce((sum, doc) => sum + (doc.relationshipsCount || 0), 0),
+          completedFiles: product.documents.filter(doc => doc.status === 'Completed').length
+        }))
+      }));
+
+      // Create file processing results
+      const fileResults = results.map(r => {
+        const file = allFiles.find(f => f.name === r.file);
+        return {
+          fileId: file?.id || '',
+          fileName: r.file,
+          documentType: file?.document_type || 'Other',
+          status: r.result.success ? 'completed' : 'failed',
+          nodesCount: r.result.data?.nodeCount || 0,
+          relationshipsCount: r.result.data?.relationshipCount || 0,
+          processingTime: r.result.data?.processingTime || 0,
+          errorMessage: r.result.error
+        };
+      });
+
+      const comprehensiveResults = {
+        packageId,
+        packageName,
         totalFiles: allFiles.length,
         processedFiles: results.length,
         successCount,
         failureCount,
-        results
-      });
+        processingTime: totalProcessingTime,
+        totalNodes,
+        totalRelationships,
+        results: fileResults,
+        documentTypes: documentTypeStats,
+        categories: categoryStats
+      };
+
+      setProcessingResults(comprehensiveResults);
+      setShowResults(true);
 
       if (successCount > 0) {
         showSuccessToast(`Package processing completed: ${successCount} successful, ${failureCount} failed`);
@@ -710,6 +783,26 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
     return colors[type as keyof typeof colors] || 'primary';
   };
 
+  // Handlers for results viewer integration
+  const handleStartChat = useCallback((packageContext: any) => {
+    if (onStartChat) {
+      onStartChat(packageContext);
+    }
+    showSuccessToast('Starting chat with package context...');
+  }, [onStartChat]);
+
+  const handleViewGraph = useCallback((packageId: string) => {
+    if (onViewGraph) {
+      onViewGraph(packageId);
+    }
+    showSuccessToast('Opening graph view...');
+  }, [onViewGraph]);
+
+  const handleBackToPackage = useCallback(() => {
+    setShowResults(false);
+    setProcessingResults(null);
+  }, []);
+
   useEffect(() => {
     initializeData();
   }, [initializeData]);
@@ -722,6 +815,29 @@ export const PackageWorkspace: React.FC<PackageWorkspaceProps> = ({
 
     return () => clearTimeout(timeoutId);
   }, [packageHierarchy, autoSavePackage]);
+
+  // If results are available and should be shown, display the results viewer
+  if (showResults && processingResults) {
+    return (
+      <Box className={className}>
+        <Box mb={2}>
+          <Button
+            variant="outlined"
+            onClick={handleBackToPackage}
+            sx={{ mb: 2 }}
+          >
+            ← Back to Package
+          </Button>
+        </Box>
+        <PackageResultsViewer
+          packageId={processingResults.packageId}
+          processingResult={processingResults}
+          onStartChat={handleStartChat}
+          onViewGraph={handleViewGraph}
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box className={className}>
