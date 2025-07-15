@@ -567,11 +567,29 @@ async def connect(uri=Form(None), userName=Form(None), password=Form(None), data
 @app.post("/upload")
 async def upload_large_file_into_chunks(file:UploadFile = File(...), chunkNumber=Form(None), totalChunks=Form(None), 
                                         originalname=Form(None), model=Form(None), uri=Form(None), userName=Form(None), 
-                                        password=Form(None), database=Form(None),email=Form(None)):
+                                        password=Form(None), database=Form(None),email=Form(None),
+                                        categoryId=Form(None), categoryName=Form(None), productId=Form(None), 
+                                        productName=Form(None), documentType=Form(None),
+                                        expectedDocumentId=Form(None), preSelectedDocumentType=Form(None)):
     try:
         start = time.time()
         graph = create_graph_database_connection(uri, userName, password, database)
-        result = await asyncio.to_thread(upload_file, graph, model, file, chunkNumber, totalChunks, originalname, uri, CHUNK_DIR, MERGED_DIR)
+        # Create package context if provided
+        package_context = None
+        if categoryId or productId:
+            # Use pre-selected document type if provided, otherwise fall back to documentType
+            final_document_type = preSelectedDocumentType or documentType or 'Other'
+            
+            package_context = {
+                'categoryId': categoryId,
+                'categoryName': categoryName,
+                'productId': productId,
+                'productName': productName,
+                'documentType': final_document_type,
+                'expectedDocumentId': expectedDocumentId  # Link to PackageDocument template
+            }
+        
+        result = await asyncio.to_thread(upload_file, graph, model, file, chunkNumber, totalChunks, originalname, uri, CHUNK_DIR, MERGED_DIR, package_context)
         end = time.time()
         elapsed_time = end - start
         if int(chunkNumber) == int(totalChunks):
@@ -1112,7 +1130,8 @@ async def create_package(
     created_by=Form(None),
     documents=Form(None),
     relationships=Form(None),
-    customizations=Form(None)
+    customizations=Form(None),
+    products=Form(None)
 ):
     """Create a new document package"""
     try:
@@ -1157,6 +1176,13 @@ async def create_package(
                 package_config['customizations'] = json.loads(customizations)
             except json.JSONDecodeError:
                 return create_api_response('Failed', message='Invalid customizations JSON format')
+        
+        # Parse products if provided (for 3-tier hierarchy)
+        if products:
+            try:
+                package_config['products'] = json.loads(products)
+            except json.JSONDecodeError:
+                return create_api_response('Failed', message='Invalid products JSON format')
         
         # Create package
         package = package_manager.create_package(package_config)
@@ -1625,6 +1651,679 @@ async def delete_package(
         }
         logger.log_struct(json_obj, "ERROR")
         logging.exception(f'Exception in delete_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/document-packages")
+async def create_document_package(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    package_name=Form(...),
+    package_description=Form(None),
+    workspace_id=Form("default_workspace"),
+    tenant_id=Form("default_tenant")
+):
+    """
+    Create a DocumentPackage root node for package management.
+    This is the root container that will hold categories and the entire package hierarchy.
+    """
+    start_time = time.time()
+    logging.info(f"create_document_package called with package_name: {package_name}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Generate unique package ID
+        package_id = f"pkg_{int(time.time())}_{package_name.lower().replace(' ', '_')}"
+        
+        # Create package metadata
+        package_metadata = {
+            'package_id': package_id,
+            'package_name': package_name,
+            'description': package_description or f"Document package: {package_name}",
+            'workspace_id': workspace_id,
+            'tenant_id': tenant_id,
+            'metadata': {
+                'created_by': 'user',
+                'creation_timestamp': datetime.now(timezone.utc).isoformat(),
+                'version': '1.0'
+            }
+        }
+        
+        # Create DocumentPackage node in Neo4j immediately
+        success = graph_db.create_document_package_node(package_metadata)
+        
+        if not success:
+            raise Exception("Failed to create DocumentPackage node in database")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'package_id': package_id,
+            'package_name': package_name,
+            'description': package_description,
+            'workspace_id': workspace_id,
+            'tenant_id': tenant_id,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'processing_time': f"{elapsed_time:.2f}s"
+        }
+        
+        logging.info(f"DocumentPackage created successfully: {package_id} in {elapsed_time:.2f}s")
+        return create_api_response(status="Success", message=f"DocumentPackage '{package_name}' created successfully with ID: {package_id}", data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        logging.error(f"Error creating DocumentPackage: {error_message}")
+        
+        elapsed_time = time.time() - start_time
+        return create_api_response(
+            status="Failed", 
+            message=f"DocumentPackage creation failed: {error_message}",
+            data={
+                "package_name": package_name,
+                "error": error_message,
+                "processing_time": f"{elapsed_time:.2f}s"
+            }
+        )
+    finally:
+        gc.collect()
+
+
+@app.post("/categories")
+async def create_category(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    category_code=Form(...),
+    category_name=Form(...),
+    category_description=Form(None),
+    package_id=Form(None),
+    tenant_id=Form("default_tenant")
+):
+    """
+    Create a new mortgage category with immediate Neo4j node creation.
+    Implements the 4-tier hierarchy with instant graph node creation.
+    """
+    start_time = time.time()
+    logging.info(f"create_category called with category_code: {category_code}, category_name: {category_name}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Create category metadata
+        category_metadata = {
+            'category_code': category_code,
+            'display_name': category_name,
+            'description': category_description or f"{category_code} mortgage category",
+            'tenant_id': tenant_id,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'updated_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Create category node in Neo4j immediately
+        success = graph_db.create_category_node(category_metadata)
+        
+        if not success:
+            raise Exception("Failed to create category node in database")
+        
+        # Link category to DocumentPackage if package_id is provided
+        linked_to_package = False
+        if package_id:
+            try:
+                logging.info(f"Attempting to link category {category_code} to DocumentPackage {package_id}")
+                linked_to_package = graph_db.link_category_to_package(package_id, category_code)
+                if linked_to_package:
+                    logging.info(f"SUCCESS: Category {category_code} linked to DocumentPackage {package_id}")
+                else:
+                    logging.warning(f"FAILED: Failed to link category {category_code} to DocumentPackage {package_id}")
+            except Exception as link_error:
+                logging.error(f"EXCEPTION: Failed to link category to package: {str(link_error)}")
+        else:
+            logging.warning(f"No package_id provided for category {category_code} - DocumentPackage link not created")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'category_id': f"cat_{category_code}_{int(time.time())}",
+            'category_code': category_code,
+            'category_name': category_name,
+            'description': category_description,
+            'node_created': True,
+            'linked_to_package': linked_to_package,
+            'package_id': package_id if package_id else None,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Category '{category_name}' created successfully with immediate node creation"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to create category: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_category',
+            'category_code': category_code,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in create_category: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/products")
+async def create_product(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    product_name=Form(...),
+    product_description=Form(None),
+    category_code=Form(...),
+    tenant_id=Form("default_tenant")
+):
+    """
+    Create a new product with immediate Neo4j node creation.
+    Implements the 4-tier hierarchy with instant graph node creation.
+    """
+    start_time = time.time()
+    logging.info(f"create_product called with product_name: {product_name}, category_code: {category_code}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Create product data
+        product_data = {
+            'product_id': f"prod_{product_name.lower().replace(' ', '_')}_{int(time.time())}",
+            'product_name': product_name,
+            'description': product_description or f"{product_name} product",
+            'product_type': 'core',
+            'key_features': [],
+            'underwriting_highlights': [],
+            'target_borrowers': [],
+            'tier_level': 1,
+            'processing_priority': 1,
+            'tenant_id': tenant_id,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'updated_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Create product node in Neo4j immediately
+        success = graph_db.create_product_node(product_data, category_code)
+        
+        if not success:
+            raise Exception("Failed to create product node in database")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'product_id': product_data['product_id'],
+            'product_name': product_name,
+            'description': product_description,
+            'category_code': category_code,
+            'node_created': True,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Product '{product_name}' created successfully with immediate node creation"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to create product: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_product',
+            'product_name': product_name,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in create_product: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/programs")
+async def create_program(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    program_name=Form(...),
+    program_code=Form(...),
+    program_description=Form(None),
+    product_id=Form(...),
+    tenant_id=Form("default_tenant")
+):
+    """
+    Create a new program with immediate Neo4j node creation.
+    Implements the 4-tier hierarchy with instant graph node creation.
+    """
+    start_time = time.time()
+    logging.info(f"create_program called with program_name: {program_name}, product_id: {product_id}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Create program data
+        program_data = {
+            'program_id': f"prog_{program_code.lower()}_{int(time.time())}",
+            'program_name': program_name,
+            'program_code': program_code,
+            'description': program_description or f"{program_name} program",
+            'program_type': 'standard',
+            'loan_limits': {'max_amount': 1000000, 'min_amount': 100000},
+            'rate_adjustments': [],
+            'feature_differences': [],
+            'qualification_criteria': [],
+            'processing_priority': 1,
+            'tenant_id': tenant_id,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'updated_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Create program node in Neo4j immediately
+        success = graph_db.create_program_node(program_data, product_id)
+        
+        if not success:
+            raise Exception("Failed to create program node in database")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'program_id': program_data['program_id'],
+            'program_name': program_name,
+            'program_code': program_code,
+            'description': program_description,
+            'product_id': product_id,
+            'node_created': True,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Program '{program_name}' created successfully with immediate node creation"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to create program: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_program',
+            'program_name': program_name,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in create_program: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/documents/update-type")
+async def update_document_type(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    file_name=Form(...),
+    document_type=Form(...),
+    category_id=Form(None),
+    product_id=Form(None),
+    category_name=Form(None),
+    product_name=Form(None)
+):
+    """
+    Update document type and package associations for an existing document.
+    """
+    start_time = time.time()
+    logging.info(f"update_document_type called with file_name: {file_name}, document_type: {document_type}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Create package metadata for the document
+        package_metadata = {
+            'document_type': document_type,
+            'category_id': category_id,
+            'product_id': product_id,
+            'category_name': category_name,
+            'product_name': product_name,
+            'updated_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Update document node with package metadata
+        success = graph_db.add_package_metadata_to_document(file_name, package_metadata)
+        
+        if not success:
+            raise Exception("Failed to update document type in database")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'file_name': file_name,
+            'document_type': document_type,
+            'category_id': category_id,
+            'product_id': product_id,
+            'updated': True,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Document '{file_name}' type updated to '{document_type}' successfully"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to update document type: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'update_document_type',
+            'file_name': file_name,
+            'document_type': document_type,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in update_document_type: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/package-documents")
+async def create_package_document(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    product_id=Form(...),
+    document_name=Form(...),
+    document_type=Form(...),
+    expected_structure=Form(None),
+    validation_rules=Form(None),
+    required_sections=Form(None),
+    optional_sections=Form(None)
+):
+    """
+    Create a PackageDocument node representing an expected document.
+    This is part of the package template structure.
+    """
+    start_time = time.time()
+    logging.info(f"create_package_document called for product: {product_id}, document: {document_name}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Parse JSON fields if provided
+        expected_structure_data = json.loads(expected_structure) if expected_structure else {}
+        validation_rules_data = json.loads(validation_rules) if validation_rules else {}
+        required_sections_list = json.loads(required_sections) if required_sections else []
+        optional_sections_list = json.loads(optional_sections) if optional_sections else []
+        
+        # Create package document data
+        package_document_data = {
+            'document_id': f"pkgdoc_{product_id}_{document_type.lower()}_{int(time.time())}",
+            'document_name': document_name,
+            'document_type': document_type,
+            'expected_structure': expected_structure_data,
+            'validation_rules': validation_rules_data,
+            'required_sections': required_sections_list,
+            'optional_sections': optional_sections_list
+        }
+        
+        # Create package document node in Neo4j
+        success = graph_db.create_package_document_node(package_document_data, product_id)
+        
+        if not success:
+            raise Exception("Failed to create package document node in database")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'document_id': package_document_data['document_id'],
+            'document_name': document_name,
+            'document_type': document_type,
+            'product_id': product_id,
+            'node_created': True,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Package document '{document_name}' created successfully"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to create package document: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'create_package_document',
+            'document_name': document_name,
+            'product_id': product_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in create_package_document: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/products/{product_id}/expected-documents")
+async def get_expected_documents(
+    product_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None)
+):
+    """
+    Get list of expected documents for a product with upload status.
+    Used to power the document type slots interface.
+    """
+    start_time = time.time()
+    logging.info(f"get_expected_documents called for product: {product_id}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Get expected documents with upload status
+        expected_documents = graph_db.get_expected_documents_for_product(product_id)
+        
+        # Calculate completion status
+        total_expected = len(expected_documents)
+        uploaded_count = sum(1 for doc in expected_documents if doc['upload_status'] != 'empty')
+        completion_percentage = (uploaded_count / total_expected * 100) if total_expected > 0 else 0
+        
+        # Get product name for context
+        product_info = graph_db.get_product_info(product_id)
+        product_name = product_info.get('product_name', 'Unknown Product') if product_info else 'Unknown Product'
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'product_id': product_id,
+            'product_name': product_name,
+            'expected_documents': expected_documents,
+            'completion_status': {
+                'total_expected': total_expected,
+                'uploaded_count': uploaded_count,
+                'completion_percentage': round(completion_percentage, 1)
+            },
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Found {total_expected} expected documents for product {product_name}"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to get expected documents for product: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'get_expected_documents',
+            'product_id': product_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in get_expected_documents: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.post("/package-documents/link-upload")
+async def link_document_upload(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    document_filename=Form(...),
+    package_document_id=Form(...)
+):
+    """
+    Link an uploaded Document to its corresponding PackageDocument.
+    This connects the expected document to the actual uploaded file.
+    """
+    start_time = time.time()
+    logging.info(f"link_document_upload called: {document_filename} -> {package_document_id}")
+    
+    try:
+        # Initialize graph database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Link the uploaded document to package document
+        success = graph_db.link_uploaded_document_to_package_document(
+            document_filename, 
+            package_document_id
+        )
+        
+        if not success:
+            raise Exception("Failed to link document to package document")
+        
+        elapsed_time = time.time() - start_time
+        
+        response_data = {
+            'document_filename': document_filename,
+            'package_document_id': package_document_id,
+            'linked': True,
+            'elapsed_api_time': f'{elapsed_time:.2f}'
+        }
+        
+        message = f"Document '{document_filename}' linked to package document successfully"
+        return create_api_response('Success', message=message, data=response_data)
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to link document: {error_message}"
+        json_obj = {
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'link_document_upload',
+            'document_filename': document_filename,
+            'package_document_id': package_document_id,
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in link_document_upload: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/packages/{package_id}/completion-status")
+async def get_package_completion(
+    package_id: str,
+    uri: str = None,
+    userName: str = None,
+    password: str = None,
+    database: str = None
+):
+    """Get completion status of all documents in a package"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Get completion status
+        status = graph_db.get_package_completion_status(package_id)
+        
+        elapsed_time = time.time() - start
+        
+        return create_api_response(
+            'Success',
+            message=f"Package completion status retrieved in {elapsed_time:.2f}s",
+            data=status
+        )
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to get package completion status: {error_message}"
+        logging.exception(f'Exception in get_package_completion: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/products/{product_id}/discovered-programs")
+async def get_discovered_programs(
+    product_id: str,
+    uri: str = None,
+    userName: str = None,
+    password: str = None,
+    database: str = None
+):
+    """Get all programs discovered during document processing for a product"""
+    try:
+        start = time.time()
+        
+        # Create database connection
+        graph = create_graph_database_connection(uri, userName, password, database)
+        graph_db = graphDBdataAccess(graph)
+        
+        # Get discovered programs
+        programs = graph_db.get_discovered_programs_for_product(product_id)
+        
+        elapsed_time = time.time() - start
+        
+        return create_api_response(
+            'Success',
+            message=f"Retrieved {len(programs)} discovered programs in {elapsed_time:.2f}s",
+            data=programs
+        )
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Failed to get discovered programs: {error_message}"
+        logging.exception(f'Exception in get_discovered_programs: {e}')
         return create_api_response('Failed', message=message, error=error_message)
     finally:
         gc.collect()
@@ -2158,6 +2857,661 @@ async def validate_package_config(
         return create_api_response('Failed', message=message, error=error_message)
     finally:
         gc.collect()
+
+
+# Package Processing API Endpoints
+@app.post("/packages/process")
+async def process_package(
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None),
+    package_id=Form(...),
+    model=Form(...),
+    apikey=Form(None),
+    base_url=Form(None),
+    is_vector_selected=Form(True),
+    is_graph_update=Form(False),
+    language=Form('en'),
+    chat_mode=Form(False),
+    node_labels=Form(None),
+    relationship_labels=Form(None),
+    additional_instructions=Form(None)
+):
+    """Process all documents in a package using hierarchical chunking with database-stored packages"""
+    try:
+        start = time.time()
+        
+        # Parse additional instructions to detect package mode
+        package_context = {}
+        if additional_instructions:
+            try:
+                package_context = json.loads(additional_instructions)
+            except json.JSONDecodeError:
+                package_context = {'package_mode': True, 'package_id': package_id}
+        
+        # Get package documents from database
+        graph = create_graph_database_connection(uri, userName, password, database)
+        gdb = graphDBdataAccess(graph)
+        package_docs = gdb.get_package_documents(package_id)
+        
+        if not package_docs:
+            return create_api_response('Failed', message=f'No documents found in package {package_id}')
+        
+        # Get package metadata from database
+        package_metadata = {
+            'package_id': package_id,
+            'total_documents': len(package_docs),
+            'document_types': list(set(doc.get('document_type', 'Other') for doc in package_docs))
+        }
+        
+        logging.info(f"Retrieved {len(package_docs)} documents from database for package {package_id}")
+        
+        # Initialize processing status
+        processing_status = {
+            'packageId': package_id,
+            'status': 'processing',
+            'progress': 0,
+            'processedDocuments': 0,
+            'totalDocuments': len(package_docs),
+            'currentDocument': None,
+            'startTime': datetime.now(timezone.utc).isoformat(),
+            'results': []
+        }
+        
+        # Store processing status (in practice, would use Redis or database)
+        # For now, using in-memory storage
+        app.state.processing_status = getattr(app.state, 'processing_status', {})
+        app.state.processing_status[package_id] = processing_status
+        
+        # Process documents with package-aware chunking
+        results = []
+        success_count = 0
+        failure_count = 0
+        
+        for i, doc in enumerate(package_docs):
+            try:
+                # Update processing status
+                processing_status['currentDocument'] = doc.get('name', f'Document {i+1}')
+                processing_status['progress'] = int((i / len(package_docs)) * 100)
+                
+                # Enhanced instructions for package processing with full context
+                doc_instructions = f"""
+                PACKAGE PROCESSING MODE - DATABASE STORED DOCUMENTS:
+                - Package ID: {package_id}
+                - Document: {doc.get('name', 'Unknown')}
+                - Document Type: {doc.get('document_type', 'Other')}
+                - Document ID: {doc.get('id', 'Unknown')}
+                - Processing Type: {doc.get('processing_type', 'package')}
+                - File Source: {doc.get('file_source', 'local')}
+                
+                HIERARCHICAL PROCESSING REQUIREMENTS:
+                - Use hierarchical chunking with navigation extraction
+                - Preserve document structure and relationships within package context
+                - Extract package-aware entities and relationships
+                - Enable cross-document relationships within the same package
+                - Consider document context within the complete package hierarchy
+                
+                PACKAGE CONTEXT AND CROSS-DOCUMENT RELATIONSHIPS:
+                - Total documents in package: {len(package_docs)}
+                - Document types in package: {package_metadata.get('document_types', [])}
+                - Package metadata: {json.dumps(package_metadata, indent=2)}
+                - Enable relationship extraction between documents in the same package
+                - Consider relationships to other documents: {[d.get('name', 'Unknown') for d in package_docs if d.get('id') != doc.get('id')]}
+                
+                DOCUMENT SPECIFIC CONFIGURATION:
+                - Expected structure: {json.dumps(doc.get('expected_structure', {}), indent=2)}
+                - Required sections: {doc.get('required_sections', [])}
+                - Optional sections: {doc.get('optional_sections', [])}
+                - Entity types: {doc.get('entity_types', [])}
+                - Quality thresholds: {doc.get('quality_thresholds', {})}
+                
+                CROSS-DOCUMENT INTELLIGENCE:
+                - Look for references to other documents in the same package
+                - Extract relationships between entities across documents
+                - Identify shared concepts and terminology
+                - Maintain package-level entity consistency
+                
+                {additional_instructions or ''}
+                """
+                
+                # Call the main processing function with package context
+                # For package processing, we'll use the local file processing function
+                # assuming documents are stored locally or we have the content
+                
+                # Parse node and relationship labels
+                allowedNodes = []
+                allowedRelationship = []
+                if node_labels:
+                    try:
+                        allowedNodes = json.loads(node_labels) if isinstance(node_labels, str) else node_labels
+                    except:
+                        allowedNodes = []
+                        
+                if relationship_labels:
+                    try:
+                        allowedRelationship = json.loads(relationship_labels) if isinstance(relationship_labels, str) else relationship_labels
+                    except:
+                        allowedRelationship = []
+                
+                # Enhanced file processing with better validation and error handling
+                doc_name = doc.get('name', f'doc_{i}')
+                doc_id = doc.get('id', '')
+                doc_type = doc.get('document_type', 'Other')
+                file_source = doc.get('file_source', 'local')
+                
+                # Multiple strategies to locate the file
+                merged_file_path = None
+                file_found = False
+                
+                if doc_name:
+                    # Strategy 1: Check sanitized filename in merged directory
+                    sanitized_name = sanitize_filename(doc_name)
+                    potential_path = os.path.join(MERGED_DIR, sanitized_name)
+                    if os.path.exists(potential_path):
+                        merged_file_path = potential_path
+                        file_found = True
+                        logging.info(f"Found document file: {potential_path}")
+                    else:
+                        # Strategy 2: Check original filename
+                        original_path = os.path.join(MERGED_DIR, doc_name)
+                        if os.path.exists(original_path):
+                            merged_file_path = original_path
+                            file_found = True
+                            logging.info(f"Found document file with original name: {original_path}")
+                        else:
+                            # Strategy 3: Check if file exists with document ID
+                            id_based_path = os.path.join(MERGED_DIR, f"{doc_id}_{sanitized_name}")
+                            if os.path.exists(id_based_path):
+                                merged_file_path = id_based_path
+                                file_found = True
+                                logging.info(f"Found document file with ID prefix: {id_based_path}")
+                
+                if file_found and merged_file_path:
+                    # Process the document using the existing file
+                    logging.info(f"Processing document: {doc_name} (Type: {doc_type}) from {merged_file_path}")
+                    
+                    # Check if Document node already exists from upload
+                    graph = create_graph_database_connection(uri, userName, password, database)
+                    graphDb_data_Access = graphDBdataAccess(graph)
+                    existing_doc_result = graphDb_data_Access.get_current_status_document_node(doc_name)
+                    
+                    if existing_doc_result and len(existing_doc_result) > 0:
+                        # Document exists from upload - update it and link to product
+                        logging.info(f"Document node already exists for {doc_name} - updating existing node")
+                        
+                        # Update the existing Document node status to Processing  
+                        obj_source_node = sourceNode()
+                        obj_source_node.file_name = doc_name
+                        obj_source_node.status = "Processing"
+                        obj_source_node.model = model
+                        graphDb_data_Access.update_source_node(obj_source_node)
+                        
+                        # Link document to appropriate level (product or program) immediately
+                        if doc.get('associated_to') == 'program' and doc.get('parent_id'):
+                            # Document belongs to a program
+                            program_id = doc.get('parent_id')
+                            link_success = graphDb_data_Access.link_document_to_program(doc_name, program_id)
+                            if link_success:
+                                logging.info(f"Successfully linked document {doc_name} to program {program_id}")
+                            else:
+                                logging.warning(f"Failed to link document {doc_name} to program {program_id}")
+                        elif product_id:
+                            # Document belongs to a product
+                            link_success = graphDb_data_Access.link_document_to_product(doc_name, product_id)
+                            if link_success:
+                                logging.info(f"Successfully linked document {doc_name} to product {product_id}")
+                            else:
+                                logging.warning(f"Failed to link document {doc_name} to product {product_id}")
+                        
+                        # Enhance doc_instructions with category, product, and program metadata
+                        enhanced_instructions = doc_instructions
+                        
+                        # Get category metadata
+                        category_metadata = graphDb_data_Access.get_category_metadata(category)
+                        category_context = ""
+                        if category_metadata:
+                            category_context = f"""
+CATEGORY CONTEXT:
+- Category: {category_metadata.get('display_name', category)}
+- Description: {category_metadata.get('description', '')}
+- Key Characteristics: {', '.join(category_metadata.get('key_characteristics', []))}
+- Regulatory Framework: {category_metadata.get('regulatory_framework', '')}
+- Risk Profile: {category_metadata.get('risk_profile', '')}
+"""
+                        
+                        # Get product metadata
+                        product_metadata = graphDb_data_Access.get_product_metadata(product_id) if product_id else {}
+                        product_context = ""
+                        if product_metadata:
+                            product_context = f"""
+PRODUCT CONTEXT:
+- Product: {product_metadata.get('product_name', '')}
+- Description: {product_metadata.get('description', '')}
+- Key Features: {', '.join(product_metadata.get('key_features', []))}
+- Underwriting Highlights: {', '.join(product_metadata.get('underwriting_highlights', []))}
+- Target Borrowers: {', '.join(product_metadata.get('target_borrowers', []))}
+- Product Type: {product_metadata.get('product_type', '')}
+"""
+                        
+                        # Get program metadata if document is program-specific
+                        program_context = ""
+                        if doc.get('associated_to') == 'program' and doc.get('parent_id'):
+                            program_metadata = graphDb_data_Access.get_program_metadata(doc.get('parent_id'))
+                            if program_metadata:
+                                loan_limits = program_metadata.get('loan_limits', {})
+                                loan_limits_str = ', '.join([f"{k}: {v}" for k, v in loan_limits.items()]) if loan_limits else "Standard limits"
+                                
+                                program_context = f"""
+PROGRAM CONTEXT:
+- Program: {program_metadata.get('program_name', '')} ({program_metadata.get('program_code', '')})
+- Description: {program_metadata.get('description', '')}
+- Program Type: {program_metadata.get('program_type', '')}
+- Loan Limits: {loan_limits_str}
+- Rate Adjustments: {', '.join(program_metadata.get('rate_adjustments', []))}
+- Feature Differences: {', '.join(program_metadata.get('feature_differences', []))}
+- Qualification Criteria: {', '.join(program_metadata.get('qualification_criteria', []))}
+"""
+                        
+                        # Combine all instructions with enhanced context
+                        if category_metadata or product_metadata or program_context:
+                            enhanced_instructions = f"""
+{doc_instructions}
+
+MORTGAGE PROCESSING CONTEXT:
+{category_context}
+{product_context}
+{program_context}
+
+ENTITY EXTRACTION GUIDANCE:
+- Focus on entities relevant to {category_metadata.get('display_name', category)} mortgage category
+- Pay special attention to {product_metadata.get('product_name', '')} product-specific terms
+- Consider regulatory requirements: {category_metadata.get('regulatory_framework', '')}
+- Extract underwriting criteria related to: {', '.join(product_metadata.get('underwriting_highlights', []))}
+{f"- This document is program-specific for {program_metadata.get('program_name', '')} - focus on program-level variations and pricing" if program_context else ""}
+"""
+                        
+                        # Process the document with enhanced context
+                        uri_latency, result = await extract_graph_from_file_local_file(
+                            uri=uri,
+                            userName=userName,
+                            password=password,
+                            database=database,
+                            model=model,
+                            merged_file_path=merged_file_path,
+                            fileName=doc_name,
+                            allowedNodes=allowedNodes,
+                            allowedRelationship=allowedRelationship,
+                            token_chunk_size=512,
+                            chunk_overlap=100,
+                            chunks_to_combine=1,
+                            retry_condition=False,
+                            additional_instructions=enhanced_instructions
+                        )
+                    else:
+                        # No existing Document node - proceed with enhanced processing
+                        # Get category and product metadata for enhanced instructions
+                        category_metadata = graphDb_data_Access.get_category_metadata(category)
+                        product_metadata = graphDb_data_Access.get_product_metadata(product_id) if product_id else {}
+                        
+                        enhanced_instructions = doc_instructions
+                        if category_metadata or product_metadata:
+                            category_context = f"""
+CATEGORY CONTEXT:
+- Category: {category_metadata.get('display_name', category)}
+- Description: {category_metadata.get('description', '')}
+- Key Characteristics: {', '.join(category_metadata.get('key_characteristics', []))}
+- Regulatory Framework: {category_metadata.get('regulatory_framework', '')}
+- Risk Profile: {category_metadata.get('risk_profile', '')}
+""" if category_metadata else ""
+                        
+                            product_context = f"""
+PRODUCT CONTEXT:
+- Product: {product_metadata.get('product_name', '')}
+- Description: {product_metadata.get('description', '')}
+- Key Features: {', '.join(product_metadata.get('key_features', []))}
+- Underwriting Highlights: {', '.join(product_metadata.get('underwriting_highlights', []))}
+- Target Borrowers: {', '.join(product_metadata.get('target_borrowers', []))}
+- Product Type: {product_metadata.get('product_type', '')}
+""" if product_metadata else ""
+                        
+                            enhanced_instructions = f"""
+{doc_instructions}
+
+MORTGAGE PROCESSING CONTEXT:
+{category_context}
+{product_context}
+
+ENTITY EXTRACTION GUIDANCE:
+- Focus on entities relevant to {category_metadata.get('display_name', category)} mortgage category
+- Pay special attention to {product_metadata.get('product_name', '')} product-specific terms
+- Consider regulatory requirements: {category_metadata.get('regulatory_framework', '')}
+- Extract underwriting criteria related to: {', '.join(product_metadata.get('underwriting_highlights', []))}
+"""
+                        
+                        uri_latency, result = await extract_graph_from_file_local_file(
+                            uri=uri,
+                            userName=userName,
+                            password=password,
+                            database=database,
+                            model=model,
+                            merged_file_path=merged_file_path,
+                            fileName=doc_name,
+                            allowedNodes=allowedNodes,
+                            allowedRelationship=allowedRelationship,
+                            token_chunk_size=512,
+                            chunk_overlap=100,
+                            chunks_to_combine=1,
+                            retry_condition=False,
+                            additional_instructions=enhanced_instructions
+                        )
+                else:
+                    # File not found - create a detailed failed result with suggestions
+                    logging.warning(f"Document file not found: {doc_name} (ID: {doc_id}, Type: {doc_type})")
+                    logging.warning(f"Checked paths: {[os.path.join(MERGED_DIR, sanitized_name), os.path.join(MERGED_DIR, doc_name)]}")
+                    
+                    result = {
+                        'status': 'Failed',
+                        'error': f'Document file not found: {doc_name}. Please upload the file first.',
+                        'details': {
+                            'document_id': doc_id,
+                            'document_type': doc_type,
+                            'file_source': file_source,
+                            'checked_paths': [
+                                os.path.join(MERGED_DIR, sanitize_filename(doc_name)),
+                                os.path.join(MERGED_DIR, doc_name),
+                                os.path.join(MERGED_DIR, f"{doc_id}_{sanitize_filename(doc_name)}")
+                            ]
+                        },
+                        'nodeCount': 0,
+                        'relationshipCount': 0,
+                        'processingTime': 0
+                    }
+                    uri_latency = 0
+                
+                if result.get('status') == 'Success':
+                    success_count += 1
+                    results.append({
+                        'fileId': doc.get('id', ''),
+                        'fileName': doc.get('name', ''),
+                        'documentType': doc.get('document_type', 'Other'),
+                        'status': 'completed',
+                        'nodesCount': result.get('nodeCount', 0),
+                        'relationshipsCount': result.get('relationshipCount', 0),
+                        'processingTime': result.get('processingTime', 0),
+                        'fileSource': doc.get('file_source', 'local'),
+                        'fileFound': file_found,
+                        'filePath': merged_file_path,
+                        'packageContext': {
+                            'packageId': package_id,
+                            'expectedStructure': doc.get('expected_structure', {}),
+                            'entityTypes': doc.get('entity_types', []),
+                            'qualityThresholds': doc.get('quality_thresholds', {})
+                        }
+                    })
+                else:
+                    failure_count += 1
+                    results.append({
+                        'fileId': doc.get('id', ''),
+                        'fileName': doc.get('name', ''),
+                        'documentType': doc.get('document_type', 'Other'),
+                        'status': 'failed',
+                        'nodesCount': 0,
+                        'relationshipsCount': 0,
+                        'processingTime': 0,
+                        'errorMessage': result.get('error', 'Processing failed'),
+                        'errorDetails': result.get('details', {}),
+                        'fileSource': doc.get('file_source', 'local'),
+                        'fileFound': file_found,
+                        'filePath': merged_file_path,
+                        'packageContext': {
+                            'packageId': package_id,
+                            'expectedStructure': doc.get('expected_structure', {}),
+                            'entityTypes': doc.get('entity_types', []),
+                            'qualityThresholds': doc.get('quality_thresholds', {})
+                        }
+                    })
+                
+            except Exception as e:
+                failure_count += 1
+                logging.error(f"Exception processing document {doc.get('name', 'Unknown')}: {str(e)}")
+                results.append({
+                    'fileId': doc.get('id', ''),
+                    'fileName': doc.get('name', ''),
+                    'documentType': doc.get('document_type', 'Other'),
+                    'status': 'failed',
+                    'nodesCount': 0,
+                    'relationshipsCount': 0,
+                    'processingTime': 0,
+                    'errorMessage': f'Exception during processing: {str(e)}',
+                    'errorDetails': {
+                        'document_id': doc.get('id', ''),
+                        'document_type': doc.get('document_type', 'Other'),
+                        'file_source': doc.get('file_source', 'local'),
+                        'exception_type': type(e).__name__
+                    },
+                    'fileSource': doc.get('file_source', 'local'),
+                    'fileFound': False,
+                    'filePath': None,
+                    'packageContext': {
+                        'packageId': package_id,
+                        'expectedStructure': doc.get('expected_structure', {}),
+                        'entityTypes': doc.get('entity_types', []),
+                        'qualityThresholds': doc.get('quality_thresholds', {})
+                    }
+                })
+            
+            # Update processed count
+            processing_status['processedDocuments'] = i + 1
+        
+        # Finalize processing status with enhanced metrics
+        processing_status['status'] = 'completed'
+        processing_status['endTime'] = datetime.now(timezone.utc).isoformat()
+        processing_status['results'] = {
+            'files': results,
+            'successCount': success_count,
+            'failureCount': failure_count,
+            'totalNodes': sum(r.get('nodesCount', 0) for r in results),
+            'totalRelationships': sum(r.get('relationshipsCount', 0) for r in results),
+            'packageMetrics': {
+                'totalProcessingTime': sum(r.get('processingTime', 0) for r in results),
+                'averageProcessingTime': sum(r.get('processingTime', 0) for r in results) / len(results) if results else 0,
+                'filesFound': sum(1 for r in results if r.get('fileFound', False)),
+                'filesNotFound': sum(1 for r in results if not r.get('fileFound', False)),
+                'documentTypeBreakdown': {
+                    doc_type: {'count': len([r for r in results if r.get('documentType') == doc_type]),
+                               'success': len([r for r in results if r.get('documentType') == doc_type and r.get('status') == 'completed']),
+                               'failed': len([r for r in results if r.get('documentType') == doc_type and r.get('status') == 'failed'])}
+                    for doc_type in set(r.get('documentType', 'Other') for r in results)
+                },
+                'crossDocumentContext': {
+                    'packageId': package_id,
+                    'totalDocuments': len(package_docs),
+                    'documentTypes': package_metadata.get('document_types', []),
+                    'crossDocumentRelationshipsEnabled': True
+                }
+            }
+        }
+        
+        end = time.time()
+        elapsed_time = end - start
+        
+        # Enhanced logging with package-level context
+        json_obj = {
+            'package_id': package_id,
+            'total_documents': len(package_docs),
+            'success_count': success_count,
+            'failure_count': failure_count,
+            'processing_time': elapsed_time,
+            'total_nodes': sum(r.get('nodesCount', 0) for r in results),
+            'total_relationships': sum(r.get('relationshipsCount', 0) for r in results),
+            'files_found': sum(1 for r in results if r.get('fileFound', False)),
+            'files_not_found': sum(1 for r in results if not r.get('fileFound', False)),
+            'document_types': package_metadata.get('document_types', []),
+            'status': 'Success',
+            'api_name': 'process_package',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "INFO")
+        
+        # Clean up any duplicate Document nodes that weren't properly linked
+        try:
+            graph = create_graph_database_connection(uri, userName, password, database)
+            graphDb_data_Access = graphDBdataAccess(graph)
+            cleanup_success = graphDb_data_Access.cleanup_duplicate_documents(package_id)
+            if cleanup_success:
+                logging.info(f"Successfully cleaned up duplicate documents for package: {package_id}")
+            else:
+                logging.warning(f"Failed to clean up duplicate documents for package: {package_id}")
+        except Exception as cleanup_error:
+            logging.error(f"Error during duplicate document cleanup: {str(cleanup_error)}")
+        
+        return create_api_response('Success', 
+                                   data={
+                                       'processing_id': package_id,
+                                       'status': processing_status,
+                                       'package_metadata': package_metadata
+                                   },
+                                   message=f'Package processing completed: {success_count} succeeded, {failure_count} failed')
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Package processing error: {error_message}"
+        json_obj = {
+            'package_id': package_id,
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'process_package',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in process_package: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+    finally:
+        gc.collect()
+
+
+@app.get("/packages/{package_id}/processing-status")
+async def get_package_processing_status(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None)
+):
+    """Get processing status for a package"""
+    try:
+        # Get processing status from memory (in practice, would use Redis or database)
+        processing_status = getattr(app.state, 'processing_status', {})
+        
+        if package_id not in processing_status:
+            return create_api_response('Failed', message='Package processing status not found')
+        
+        status = processing_status[package_id]
+        
+        return create_api_response('Success', 
+                                   data=status,
+                                   message='Processing status retrieved')
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Error getting processing status: {error_message}"
+        json_obj = {
+            'package_id': package_id,
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'get_package_processing_status',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in get_package_processing_status: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+
+
+@app.get("/packages/{package_id}/results")
+async def get_package_processing_results(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None)
+):
+    """Get processing results for a package"""
+    try:
+        # Get processing status from memory (in practice, would use Redis or database)
+        processing_status = getattr(app.state, 'processing_status', {})
+        
+        if package_id not in processing_status:
+            return create_api_response('Failed', message='Package processing results not found')
+        
+        status = processing_status[package_id]
+        
+        if status.get('status') != 'completed':
+            return create_api_response('Failed', message='Package processing not completed')
+        
+        results = status.get('results', {})
+        
+        return create_api_response('Success', 
+                                   data=results,
+                                   message='Processing results retrieved')
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Error getting processing results: {error_message}"
+        json_obj = {
+            'package_id': package_id,
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'get_package_processing_results',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in get_package_processing_results: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
+
+
+@app.post("/packages/{package_id}/cancel")
+async def cancel_package_processing(
+    package_id: str,
+    uri=Form(None),
+    userName=Form(None),
+    password=Form(None),
+    database=Form(None)
+):
+    """Cancel processing for a package"""
+    try:
+        # Get processing status from memory (in practice, would use Redis or database)
+        processing_status = getattr(app.state, 'processing_status', {})
+        
+        if package_id not in processing_status:
+            return create_api_response('Failed', message='Package processing not found')
+        
+        status = processing_status[package_id]
+        
+        if status.get('status') in ['completed', 'failed']:
+            return create_api_response('Failed', message='Package processing already finished')
+        
+        # Cancel processing
+        status['status'] = 'cancelled'
+        status['endTime'] = datetime.now(timezone.utc).isoformat()
+        
+        return create_api_response('Success', 
+                                   data=status,
+                                   message='Package processing cancelled')
+        
+    except Exception as e:
+        error_message = str(e)
+        message = f"Error cancelling processing: {error_message}"
+        json_obj = {
+            'package_id': package_id,
+            'error_message': error_message,
+            'status': 'Failed',
+            'api_name': 'cancel_package_processing',
+            'logging_time': formatted_time(datetime.now(timezone.utc))
+        }
+        logger.log_struct(json_obj, "ERROR")
+        logging.exception(f'Exception in cancel_package_processing: {e}')
+        return create_api_response('Failed', message=message, error=error_message)
 
 
 if __name__ == "__main__":

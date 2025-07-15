@@ -45,34 +45,159 @@ class PackageAssignmentProcessor:
 - Duplicate detection within package
 - Required document presence checking
 
-### 2. Hierarchical Chunking Stage
+### 2. Enhanced Hierarchical Chunking Stage
+
+#### Enhanced Chunking Decision Pipeline
+```python
+class EnhancedChunkingPipeline:
+    def should_use_hierarchical_chunking(self, pages: List[Document]) -> bool:
+        """Enhanced decision logic for hierarchical chunking"""
+        if not self.enable_hierarchical:
+            return False
+        
+        # Calculate total document size
+        total_size = sum(len(page.page_content) for page in pages)
+        content = '\n'.join([page.page_content for page in pages])
+        
+        # Document type-specific size thresholds (UPDATED 2025-07-15)
+        size_threshold = self._get_document_type_threshold(content)
+        
+        if total_size > size_threshold:
+            self.logger.info(f"Document size {total_size} exceeds threshold {size_threshold}")
+            return False
+        
+        # Enhanced structure detection
+        has_structure = self._detect_document_structure(content)
+        
+        return has_structure
+    
+    def _get_document_type_threshold(self, content: str) -> int:
+        """Document type-specific thresholds for optimal processing"""
+        content_lower = content.lower()
+        
+        # Mortgage guidelines - typically 100-500 pages
+        if any(term in content_lower for term in ['guidelines', 'eligibility', 'underwriting']):
+            return 600000  # 600k characters (was 50k)
+        
+        # Matrix documents - typically 50-150 pages  
+        elif any(term in content_lower for term in ['matrix', 'pricing', 'rate sheet']):
+            return 300000  # 300k characters
+        
+        # Procedure documents - typically 20-100 pages
+        elif any(term in content_lower for term in ['procedure', 'process', 'workflow']):
+            return 200000  # 200k characters
+        
+        # Default threshold
+        else:
+            return self.max_doc_size_hierarchical  # 600k default
+```
+
+#### Enhanced Structure Detection
+```python
+def _detect_document_structure(self, content: str) -> bool:
+    """Enhanced structure detection with mortgage-specific patterns"""
+    # Updated patterns for mortgage documents (2025-07-15)
+    indicators = [
+        r'^\s*\d+\.\s+[A-Z]',                      # Numbered sections
+        r'^\s*CHAPTER\s+\d+',                      # Chapter headings
+        r'^\s*Section\s+\d+',                      # Section headings  
+        r'^\s*\d+\.\d+\s+',                        # Subsection numbering
+        r'^\s*[A-Z]{2,}\s*$',                      # All caps headings
+        
+        # NEW: Mortgage-specific patterns
+        r'^\s*\d+\.\d+\.\d+\s+',                   # Three-level numbering (11.8.17)
+        r'^\s*\d+\s+[A-Z][A-Z\s&/\-]+[A-Z]$',     # "2   GENERAL PROGRAM INFORMATION"
+        r'^\s*\d+\.\d+\s+[A-Z][A-Z\s&/\-]+[A-Z]$', # "2.1 THE G1 GROUP LOAN PROGRAMS"
+        r'^\s*PART\s+[IVX]+',                      # Roman numeral parts
+        r'^\s*APPENDIX\s+[A-Z]',                   # Appendices
+        r'^\s*[A-Z]{3,}(\s+[A-Z]{3,})*\s*$',      # Enhanced all caps
+        r'^\s*\d+\s+[A-Z][A-Z\s]+$',              # "1   LENDING POLICY" style
+    ]
+    
+    lines = content.split('\n')
+    structure_count = 0
+    
+    # Check first 200 lines (increased from 100)
+    check_lines = min(200, len(lines))
+    
+    for line in lines[:check_lines]:
+        line = line.strip()
+        if line and len(line) > 2:
+            for pattern in indicators:
+                if re.search(pattern, line):
+                    structure_count += 1
+                    break
+    
+    # Dynamic threshold based on document length
+    total_lines = len([l for l in lines if l.strip()])
+    if total_lines > 1000:      # Large documents (guidelines)
+        min_threshold = max(5, min(15, total_lines // 100))
+    elif total_lines > 500:     # Medium documents
+        min_threshold = max(3, min(8, total_lines // 50))
+    else:                       # Small documents
+        min_threshold = 3
+    
+    return structure_count >= min_threshold
+```
+
+#### Configuration Updates (2025-07-15)
+```python
+# UPDATED: Enhanced chunking configuration
+MAX_DOCUMENT_SIZE_FOR_HIERARCHICAL = 600000  # Increased from 50k to 600k
+MAX_PROCESSING_TIME_HIERARCHICAL = 900       # Increased from 300s to 900s
+
+# Document type thresholds
+DOCUMENT_TYPE_THRESHOLDS = {
+    'guidelines': 600000,    # Mortgage guidelines documents
+    'matrix': 300000,        # Pricing and rate matrices  
+    'procedures': 200000,    # Process and workflow docs
+    'default': 600000        # All other documents
+}
+```
 
 #### Navigation Extraction Pipeline
 ```python
 class HierarchicalChunkingPipeline:
     def process_document(self, document: Document, package_config: PackageConfig):
-        # 1. Extract document structure
-        navigation_structure = self.extract_navigation(document)
+        # 1. Enhanced navigation extraction with mortgage patterns
+        navigation_structure = self.extract_navigation_enhanced(document)
         
-        # 2. Create hierarchical chunks
+        # 2. Create context-aware hierarchical chunks
         hierarchical_chunks = self.create_hierarchical_chunks(document, navigation_structure)
         
-        # 3. Generate embeddings
+        # 3. Extract mortgage-specific entities with navigation context
+        entity_extraction = self.extract_entities_with_context(
+            navigation_structure.nodes, 
+            hierarchical_chunks,
+            package_config
+        )
+        
+        # 4. Generate embeddings with enhanced metadata
         chunk_embeddings = self.generate_embeddings(hierarchical_chunks)
         
-        # 4. Store in graph database
-        self.store_chunks_and_structure(hierarchical_chunks, navigation_structure)
+        # 5. Store with navigation relationships
+        self.store_chunks_and_structure(hierarchical_chunks, navigation_structure, entity_extraction)
         
         return HierarchicalProcessingResult(
             chunk_count=len(hierarchical_chunks),
             navigation_nodes=navigation_structure.node_count,
-            structure_quality_score=navigation_structure.quality_score
+            structure_quality_score=navigation_structure.quality_score,
+            entities_extracted=len(entity_extraction.entities),
+            processing_method='enhanced_hierarchical'
         )
 ```
 
-#### Chunking Strategy Selection
+#### Chunking Strategy Selection (Updated)
 ```python
 def select_chunking_strategy(document_type: str, content_analysis: ContentAnalysis) -> ChunkingStrategy:
+    """Enhanced strategy selection with size and structure considerations"""
+    
+    # Check if document qualifies for enhanced chunking
+    if content_analysis.document_size <= DOCUMENT_TYPE_THRESHOLDS.get(document_type, 600000):
+        if content_analysis.structure_score >= 0.7:
+            return ChunkingStrategy.ENHANCED_HIERARCHICAL
+    
+    # Fallback strategies
     if document_type == "guidelines":
         if content_analysis.has_clear_sections:
             return ChunkingStrategy.SECTION_BASED

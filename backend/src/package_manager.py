@@ -9,6 +9,7 @@ from datetime import datetime
 from src.entities.document_package import (
     DocumentPackage,
     DocumentDefinition,
+    PackageProduct,
     PackageRelationship,
     PackageStatus,
     PackageCategory,
@@ -73,7 +74,12 @@ class PackageManager:
                 updated_at=datetime.now()
             )
             
-            # Add documents from configuration
+            # Add products from configuration (3-tier hierarchy)
+            for prod_config in package_config.get('products', []):
+                product = self._create_product_from_config(prod_config)
+                package.add_product(product)
+            
+            # Add documents from configuration (backwards compatibility)
             for doc_config in package_config.get('documents', []):
                 document = self._create_document_from_config(doc_config)
                 package.add_document(document)
@@ -265,7 +271,12 @@ class PackageManager:
                 validation_rules=source_package.validation_rules.copy()
             )
             
-            # Clone documents with new IDs
+            # Clone products with new IDs
+            for source_product in source_package.products:
+                cloned_product = self._clone_product(source_product)
+                cloned_package.add_product(cloned_product)
+            
+            # Clone documents with new IDs (backwards compatibility)
             for source_doc in source_package.documents:
                 cloned_doc = self._clone_document(source_doc)
                 cloned_package.add_document(cloned_doc)
@@ -386,6 +397,25 @@ class PackageManager:
             valid_categories = [c.value for c in PackageCategory]
             raise ValueError(f"Invalid category. Must be one of: {valid_categories}")
     
+    def _create_product_from_config(self, prod_config: Dict[str, Any]) -> PackageProduct:
+        """Create PackageProduct from configuration"""
+        product = PackageProduct(
+            product_id=prod_config.get('product_id', f"prod_{uuid.uuid4().hex[:8]}"),
+            product_name=prod_config['product_name'],
+            product_type=prod_config.get('product_type', 'core'),
+            tier_level=prod_config.get('tier_level', 1),
+            processing_priority=prod_config.get('processing_priority', 1),
+            dependencies=prod_config.get('dependencies', []),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            metadata=prod_config.get('metadata', {})
+        )
+        
+        # Store documents associated with this product for later database storage
+        product.metadata['documents'] = prod_config.get('documents', [])
+        
+        return product
+
     def _create_document_from_config(self, doc_config: Dict[str, Any]) -> DocumentDefinition:
         """Create DocumentDefinition from configuration"""
         return DocumentDefinition(
@@ -447,6 +477,20 @@ class PackageManager:
             updated_rels.append(rel)
         return updated_rels
     
+    def _clone_product(self, source_product: PackageProduct) -> PackageProduct:
+        """Create a clone of a product with new ID"""
+        return PackageProduct(
+            product_id=f"prod_{uuid.uuid4().hex[:8]}",
+            product_name=source_product.product_name,
+            product_type=source_product.product_type,
+            tier_level=source_product.tier_level,
+            processing_priority=source_product.processing_priority,
+            dependencies=source_product.dependencies.copy(),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            metadata=source_product.metadata.copy()
+        )
+
     def _clone_document(self, source_doc: DocumentDefinition) -> DocumentDefinition:
         """Create a clone of a document with new ID"""
         return DocumentDefinition(
@@ -477,8 +521,11 @@ class PackageManager:
     # Database interaction methods (Task 5 implementation)
     
     def _store_package_in_db(self, package: DocumentPackage) -> None:
-        """Store package in Neo4j database"""
+        """Store package in Neo4j database and create structural nodes immediately"""
         try:
+            # Import here to avoid circular imports
+            from src.entities.document_package import DEFAULT_CATEGORY_METADATA
+            
             # Convert package to database format
             package_data = {
                 "package_id": package.package_id,
@@ -501,7 +548,137 @@ class PackageManager:
             else:
                 self.graph_db.create_package_node(package_data)
             
-            # Store documents
+            # Create Category node immediately with rich metadata
+            category_metadata = DEFAULT_CATEGORY_METADATA.get(package.category)
+            if category_metadata:
+                category_data = {
+                    "category_code": category_metadata.category.value,
+                    "display_name": category_metadata.display_name,
+                    "description": category_metadata.description,
+                    "key_characteristics": category_metadata.key_characteristics,
+                    "regulatory_framework": category_metadata.regulatory_framework,
+                    "typical_products": category_metadata.typical_products,
+                    "risk_profile": category_metadata.risk_profile
+                }
+                
+                success = self.graph_db.create_category_node(category_data)
+                if success:
+                    self.logger.info(f"Created category node: {category_metadata.display_name}")
+                else:
+                    self.logger.warning(f"Failed to create category node: {category_metadata.display_name}")
+            
+            # Store products (3-tier hierarchy)
+            for product in package.products:
+                # Create PackageProduct node (existing functionality)
+                package_product_data = {
+                    "product_id": product.product_id,
+                    "product_name": product.product_name,
+                    "product_type": product.product_type,
+                    "tier_level": product.tier_level,
+                    "processing_priority": product.processing_priority,
+                    "dependencies": product.dependencies,
+                    "created_at": product.created_at,
+                    "updated_at": product.updated_at,
+                    "metadata": product.metadata
+                }
+                self.graph_db.create_package_product(package.package_id, package_product_data)
+                
+                # Create Product node immediately with rich metadata  
+                product_node_data = {
+                    "product_id": product.product_id,
+                    "product_name": product.product_name,
+                    "product_type": product.product_type,
+                    "description": product.description,
+                    "key_features": product.key_features,
+                    "underwriting_highlights": product.underwriting_highlights,
+                    "target_borrowers": product.target_borrowers,
+                    "tier_level": product.tier_level,
+                    "processing_priority": product.processing_priority
+                }
+                
+                success = self.graph_db.create_product_node(product_node_data, package.category.value)
+                if success:
+                    self.logger.info(f"Created product node: {product.product_name}")
+                else:
+                    self.logger.warning(f"Failed to create product node: {product.product_name}")
+                
+                # Create Programs within this Product (if any)
+                programs = product.metadata.get('programs', [])
+                for prog_config in programs:
+                    program_node_data = {
+                        "program_id": prog_config.get('program_id', f"prog_{uuid.uuid4().hex[:8]}"),
+                        "program_name": prog_config.get('program_name', 'Default Program'),
+                        "program_code": prog_config.get('program_code', 'STD'),
+                        "description": prog_config.get('description', ''),
+                        "program_type": prog_config.get('program_type', 'standard'),
+                        "loan_limits": prog_config.get('loan_limits', {}),
+                        "rate_adjustments": prog_config.get('rate_adjustments', []),
+                        "feature_differences": prog_config.get('feature_differences', []),
+                        "qualification_criteria": prog_config.get('qualification_criteria', []),
+                        "processing_priority": prog_config.get('processing_priority', 1)
+                    }
+                    
+                    prog_success = self.graph_db.create_program_node(program_node_data, product.product_id)
+                    if prog_success:
+                        self.logger.info(f"Created program node: {prog_config.get('program_name', 'Unknown')}")
+                    else:
+                        self.logger.warning(f"Failed to create program node: {prog_config.get('program_name', 'Unknown')}")
+                
+                # Store documents associated with this product or its programs
+                product_documents = product.metadata.get('documents', [])
+                for doc_config in product_documents:
+                    doc_data = {
+                        "document_id": doc_config.get('document_id', f"doc_{uuid.uuid4().hex[:8]}"),
+                        "document_type": doc_config.get('document_type', 'guidelines'),
+                        "document_name": doc_config.get('document_name', 'Unknown Document'),
+                        "associated_to": doc_config.get('associated_to', 'product'),  # "product" or "program"
+                        "parent_id": doc_config.get('parent_id', product.product_id),  # product_id or program_id
+                        "expected_structure": doc_config.get('expected_structure', {}),
+                        "required_sections": doc_config.get('required_sections', []),
+                        "optional_sections": doc_config.get('optional_sections', []),
+                        "chunking_strategy": doc_config.get('chunking_strategy', 'hierarchical'),
+                        "entity_types": doc_config.get('entity_types', []),
+                        "matrix_configuration": doc_config.get('matrix_configuration'),
+                        "validation_schema": doc_config.get('validation_schema', {}),
+                        "quality_thresholds": doc_config.get('quality_thresholds', {})
+                    }
+                    
+                    # Determine association level and create document accordingly
+                    if doc_data['associated_to'] == 'program':
+                        # Document belongs to a specific program
+                        program_id = doc_data['parent_id']
+                        self.graph_db.create_package_document(package.package_id, doc_data, None)  # No product_id for program docs
+                        self.logger.info(f"Created program-level document: {doc_data['document_name']} -> Program {program_id}")
+                    else:
+                        # Document belongs to product (default behavior)
+                        self.graph_db.create_package_document(package.package_id, doc_data, product.product_id)
+                        self.logger.info(f"Created product-level document: {doc_data['document_name']} -> Product {product.product_id}")
+                
+                # Store program-specific documents from program configs
+                for prog_config in programs:
+                    program_documents = prog_config.get('documents', [])
+                    for doc_config in program_documents:
+                        doc_data = {
+                            "document_id": doc_config.get('document_id', f"doc_{uuid.uuid4().hex[:8]}"),
+                            "document_type": doc_config.get('document_type', 'matrix'),
+                            "document_name": doc_config.get('document_name', 'Unknown Document'),
+                            "associated_to": "program",
+                            "parent_id": prog_config.get('program_id'),
+                            "expected_structure": doc_config.get('expected_structure', {}),
+                            "required_sections": doc_config.get('required_sections', []),
+                            "optional_sections": doc_config.get('optional_sections', []),
+                            "chunking_strategy": doc_config.get('chunking_strategy', 'hierarchical'),
+                            "entity_types": doc_config.get('entity_types', []),
+                            "matrix_configuration": doc_config.get('matrix_configuration'),
+                            "validation_schema": doc_config.get('validation_schema', {}),
+                            "quality_thresholds": doc_config.get('quality_thresholds', {})
+                        }
+                        
+                        # Create program-specific document
+                        self.graph_db.create_package_document(package.package_id, doc_data, None)
+                        self.logger.info(f"Created program-specific document: {doc_data['document_name']} -> Program {prog_config.get('program_id')}")
+            
+            # Store documents (backwards compatibility)
             for doc in package.documents:
                 doc_data = {
                     "document_id": doc.document_id,
@@ -561,6 +738,22 @@ class PackageManager:
                 template_mappings=package_data.get("template_mappings", {}),
                 validation_rules=package_data.get("validation_rules", {})
             )
+            
+            # Load products (3-tier hierarchy)
+            products = self.graph_db.get_package_products(package_data["package_id"])
+            for prod_data in products:
+                product = PackageProduct(
+                    product_id=prod_data["product_id"],
+                    product_name=prod_data["product_name"],
+                    product_type=prod_data["product_type"],
+                    tier_level=prod_data.get("tier_level", 1),
+                    processing_priority=prod_data.get("processing_priority", 1),
+                    dependencies=prod_data.get("dependencies", []),
+                    created_at=datetime.fromisoformat(prod_data["created_at"]) if prod_data.get("created_at") else datetime.now(),
+                    updated_at=datetime.fromisoformat(prod_data["updated_at"]) if prod_data.get("updated_at") else datetime.now(),
+                    metadata=prod_data.get("metadata", {})
+                )
+                package.add_product(product)
             
             # Load documents
             documents = self.graph_db.get_package_documents(package_data["package_id"])

@@ -67,20 +67,44 @@ class EnhancedChunkingPipeline:
         
         # Calculate total document size
         total_size = sum(len(page.page_content) for page in pages)
+        content = '\n'.join([page.page_content for page in pages])
         
-        if total_size > self.max_doc_size_hierarchical:
-            self.logger.info(f"Document size {total_size} exceeds threshold {self.max_doc_size_hierarchical}, using basic chunking")
+        # Determine document type-specific size thresholds
+        size_threshold = self._get_document_type_threshold(content)
+        
+        if total_size > size_threshold:
+            self.logger.info(f"Document size {total_size} exceeds type-specific threshold {size_threshold}, using basic chunking")
             return False
         
         # Check if document appears to have structure
-        content = '\n'.join([page.page_content for page in pages])
         has_structure = self._detect_document_structure(content)
         
         if not has_structure:
             self.logger.info("No clear document structure detected, using basic chunking")
             return False
         
+        self.logger.info(f"Document qualifies for hierarchical chunking: size={total_size}, threshold={size_threshold}, structured={has_structure}")
         return True
+    
+    def _get_document_type_threshold(self, content: str) -> int:
+        """Get size threshold based on document type"""
+        content_lower = content.lower()
+        
+        # Mortgage guidelines documents - typically 100-500 pages
+        if any(term in content_lower for term in ['guidelines', 'eligibility', 'underwriting', 'policy manual', 'lending policy']):
+            return 600000  # 600k characters
+        
+        # Matrix and pricing documents - typically 50-150 pages
+        elif any(term in content_lower for term in ['matrix', 'pricing', 'rate sheet', 'pricing sheet']):
+            return 300000  # 300k characters
+        
+        # Procedures and workflow documents - typically 20-100 pages
+        elif any(term in content_lower for term in ['procedure', 'process', 'workflow', 'manual']):
+            return 200000  # 200k characters
+        
+        # Default threshold for other documents
+        else:
+            return self.max_doc_size_hierarchical
     
     def process_document_hierarchical(self, 
                                     pages: List[Document], 
@@ -211,28 +235,56 @@ class EnhancedChunkingPipeline:
     
     def _detect_document_structure(self, content: str) -> bool:
         """Detect if document has clear structure for hierarchical processing"""
-        # Look for common structural indicators
+        # Enhanced patterns for mortgage documents and general structured content
         indicators = [
-            r'^\s*\d+\.\s+[A-Z]',  # Numbered sections
-            r'^\s*CHAPTER\s+\d+',  # Chapter headings
-            r'^\s*Section\s+\d+',  # Section headings
-            r'^\s*\d+\.\d+\s+',    # Subsection numbering
-            r'^\s*[A-Z]{2,}\s*$',  # All caps headings
+            r'^\s*\d+\.\s+[A-Z]',                      # Numbered sections (original)
+            r'^\s*CHAPTER\s+\d+',                      # Chapter headings (original)
+            r'^\s*Section\s+\d+',                      # Section headings (original)
+            r'^\s*\d+\.\d+\s+',                        # Subsection numbering (original)
+            r'^\s*[A-Z]{2,}\s*$',                      # All caps headings (original)
+            
+            # New mortgage-specific patterns
+            r'^\s*\d+\.\d+\.\d+\s+',                   # Three-level numbering (11.8.17)
+            r'^\s*\d+\s+[A-Z][A-Z\s&/\-]+[A-Z]$',     # "2   GENERAL PROGRAM INFORMATION"
+            r'^\s*\d+\.\d+\s+[A-Z][A-Z\s&/\-]+[A-Z]$', # "2.1 THE G1 GROUP LOAN PROGRAMS"
+            r'^\s*PART\s+[IVX]+',                      # Roman numeral parts
+            r'^\s*APPENDIX\s+[A-Z]',                   # Appendices
+            r'^\s*[A-Z]{3,}(\s+[A-Z]{3,})*\s*$',      # Enhanced all caps (3+ char words)
+            r'^\s*\d+\s+[A-Z][A-Z\s]+$',              # "1   LENDING POLICY" style
         ]
         
         lines = content.split('\n')
         structure_count = 0
         
-        for line in lines[:min(100, len(lines))]:  # Check first 100 lines
+        # Check first 200 lines (increased from 100) to account for cover pages
+        check_lines = min(200, len(lines))
+        
+        for line in lines[:check_lines]:
             line = line.strip()
-            if line:
+            if line and len(line) > 2:  # Skip very short lines
                 for pattern in indicators:
                     if re.search(pattern, line):
                         structure_count += 1
                         break
         
-        # Require at least 3 structural indicators
-        return structure_count >= 3
+        # Dynamic threshold based on document length - longer docs need more structure
+        # But mortgage docs are inherently well-structured, so be more lenient
+        total_lines = len([l for l in lines if l.strip()])
+        if total_lines > 1000:  # Large documents like guidelines
+            min_threshold = max(5, min(15, total_lines // 100))
+        elif total_lines > 500:  # Medium documents
+            min_threshold = max(3, min(8, total_lines // 50))
+        else:  # Small documents
+            min_threshold = 3
+        
+        structure_found = structure_count >= min_threshold
+        
+        # Log for debugging
+        self.logger.info(f"Structure detection: {structure_count} indicators found, "
+                        f"threshold: {min_threshold}, total_lines: {total_lines}, "
+                        f"result: {structure_found}")
+        
+        return structure_found
     
     def _detect_document_format(self, file_name: str) -> DocumentFormat:
         """Detect document format from filename"""
@@ -327,8 +379,9 @@ class EnhancedChunkingPipeline:
 # Configuration from environment variables
 ENABLE_HIERARCHICAL_CHUNKING = os.getenv('ENABLE_HIERARCHICAL_CHUNKING', 'true').lower() == 'true'
 ENABLE_RELATIONSHIP_DETECTION = os.getenv('ENABLE_RELATIONSHIP_DETECTION', 'true').lower() == 'true'
-MAX_DOCUMENT_SIZE_FOR_HIERARCHICAL = int(os.getenv('MAX_DOCUMENT_SIZE_FOR_HIERARCHICAL', '50000'))
-MAX_PROCESSING_TIME_HIERARCHICAL = int(os.getenv('MAX_PROCESSING_TIME_HIERARCHICAL', '300'))
+# Increased from 50k to 600k to support mortgage guidelines documents
+MAX_DOCUMENT_SIZE_FOR_HIERARCHICAL = int(os.getenv('MAX_DOCUMENT_SIZE_FOR_HIERARCHICAL', '600000'))
+MAX_PROCESSING_TIME_HIERARCHICAL = int(os.getenv('MAX_PROCESSING_TIME_HIERARCHICAL', '900'))
 
 # Global pipeline instance
 enhanced_pipeline = EnhancedChunkingPipeline(

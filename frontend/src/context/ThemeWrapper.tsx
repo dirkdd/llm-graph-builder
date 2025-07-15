@@ -6,10 +6,22 @@ export const ThemeWrapperContext = createContext({
   toggleColorMode: () => {},
   colorMode: localStorage.getItem('mode') as 'light' | 'dark',
 });
+
+// Wrapper component to filter out unsupported props
+const FilteredThemeProvider = ({ children, theme, ...props }: any) => {
+  // Only pass the theme prop to ThemeProvider
+  return (
+    <ThemeProvider theme={theme}>
+      {children}
+    </ThemeProvider>
+  );
+};
 interface ThemeWrapperProps {
   children: ReactNode;
+  className?: string; // Accept className but don't use it
+  [key: string]: any; // Accept any other props but filter them out
 }
-const ThemeWrapper = ({ children }: ThemeWrapperProps) => {
+const ThemeWrapper = ({ children, className, ...otherProps }: ThemeWrapperProps) => {
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
   const defaultMode = localStorage.getItem('mode') as 'light' | 'dark';
   const [mode, setMode] = useState<'light' | 'dark'>(defaultMode ?? (prefersDarkMode ? 'dark' : 'light'));
@@ -215,10 +227,10 @@ const ThemeWrapper = ({ children }: ThemeWrapperProps) => {
   return (
     <ThemeWrapperContext.Provider value={themeWrapperUtils}>
       <NeedleThemeProvider theme={mode as 'light' | 'dark' | undefined} wrapperProps={{ isWrappingChildren: false }}>
-        <ThemeProvider theme={muiTheme}>
+        <FilteredThemeProvider theme={muiTheme}>
           <CssBaseline />
           {children}
-        </ThemeProvider>
+        </FilteredThemeProvider>
       </NeedleThemeProvider>
     </ThemeWrapperContext.Provider>
   );

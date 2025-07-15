@@ -91,6 +91,7 @@ const Content: React.FC<ContentProps> = ({
   const [isGraphBtnMenuOpen, setIsGraphBtnMenuOpen] = useState<boolean>(false);
   const graphbtnRef = useRef<HTMLDivElement>(null);
   const chunksTextAbortController = useRef<AbortController>();
+  const [packageProcessingHandler, setPackageProcessingHandler] = useState<(() => void) | null>(null);
   const { colorMode } = useContext(ThemeWrapperContext);
   const { isAuthenticated } = useAuth0();
   const { setIsOpen } = useSpotlightContext();
@@ -158,7 +159,7 @@ const Content: React.FC<ContentProps> = ({
       localStorage.setItem('processedCount', JSON.stringify({ db: userCredentials?.uri, count: processedCount }));
     }
     if (processedCount == batchSize && !isReadOnlyUser) {
-      handleGenerateGraph([], true);
+      handleProcessPackage([], true);
     }
     if (processedCount === 1 && queue.isEmpty()) {
       (async () => {
@@ -493,18 +494,52 @@ const Content: React.FC<ContentProps> = ({
   };
 
   /**
-   * Processes files in batches, respecting a maximum batch size.
+   * Processes package files using the package processing pipeline.
    *
-   * This function prioritizes processing files from the queue if it's not empty.
-   * If the queue is empty, it processes the provided `filesTobeProcessed`:
-   *   - If the number of files exceeds the batch size, it processes a batch and queues the rest.
-   *   - If the number of files is within the batch size, it processes them all.
-   *   - If there are already files being processed, it adjusts the batch size to avoid exceeding the limit.
+   * This function processes files using the package-aware processing system:
+   *   - Uses Phase 1 hierarchical chunking for Guidelines documents
+   *   - Processes files with enhanced relationship detection
+   *   - Provides real-time status updates during processing
+   *   - Displays comprehensive package results
    *
-   * @param filesTobeProcessed - The files to be processed.
-   * @param queueFiles - Whether to prioritize processing files from the queue. Defaults to false.
+   * For package-only mode, this directs users to use the Package Structure interface.
+   * Maintains backward compatibility for legacy file processing.
+   *
+   * @param filesTobeProcessed - The files to be processed (legacy compatibility).
+   * @param queueFiles - Whether to prioritize processing files from the queue (legacy compatibility).
    */
-  const handleGenerateGraph = (filesTobeProcessed: CustomFile[], queueFiles: boolean = false) => {
+  const handleProcessPackage = (filesTobeProcessed: CustomFile[] = [], queueFiles: boolean = false) => {
+    console.log('handleProcessPackage called with:', { filesTobeProcessed, queueFiles, packageProcessingHandler });
+    
+    // Check database connection
+    if (!connectionStatus) {
+      console.log('Database connection required for package processing');
+      showErrorToast('Database connection required for package processing');
+      return;
+    }
+
+    // For package-only mode, use the package processing handler
+    if (filesTobeProcessed.length === 0) {
+      console.log('No files to process, checking for package processing handler');
+      if (packageProcessingHandler) {
+        console.log('Calling package processing handler');
+        setIsExtractLoading(true);
+        try {
+          packageProcessingHandler();
+        } catch (error) {
+          console.error('Package processing handler failed:', error);
+          setIsExtractLoading(false);
+        }
+        return;
+      } else {
+        console.log('No package processing handler available');
+        showNormalToast('Create a package and upload documents in the Package Structure panel, then use this button to process them');
+        return;
+      }
+    }
+
+    // Maintain backward compatibility for legacy file processing if needed
+    // This will use standard chunking instead of package-aware processing
     let data = [];
     const processingFilesCount = filesData.filter((f) => f.status === 'Processing').length;
     if (filesTobeProcessed.length && !queueFiles && processingFilesCount < batchSize) {
@@ -543,11 +578,207 @@ const Content: React.FC<ContentProps> = ({
     }
   };
 
-  const handlePackageFilesUpload = useCallback((files: File[], context: PackageSelectionContext) => {
+  const handlePackageFilesUpload = useCallback(async (files: File[], context: PackageSelectionContext) => {
     // Handle package-aware file uploads
     console.log('Package files upload:', files, context);
-    // This would integrate with the existing file upload flow
-    // but add package context to the files
+    console.log('Enhanced context properties:', {
+      expectedDocumentId: context.expectedDocumentId,
+      preSelectedDocumentType: context.preSelectedDocumentType
+    });
+    
+    // Import the uploadAPI function and linkDocumentUpload
+    const { uploadAPI } = await import('../utils/FileAPI');
+    const { chunkSize } = await import('../utils/Constants');
+    const { linkDocumentUpload } = await import('../services/PackageAPI');
+    
+    // Convert File objects to CustomFile format for the files data
+    const customFiles: CustomFile[] = files.map((file, index) => ({
+      id: `${Date.now()}-${index}`,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      status: 'None',
+      model: model,
+      fileSource: 'local file',
+      processed: false,
+      processing: false,
+      uploadProgress: 0,
+      processingProgress: undefined,
+      nodesCount: 0,
+      relationshipsCount: 0,
+      retryOptionStatus: false,
+      retryOption: '',
+      chunkNodeCount: 0,
+      chunkRelCount: 0,
+      entityNodeCount: 0,
+      entityEntityRelCount: 0,
+      communityNodeCount: 0,
+      communityRelCount: 0,
+      createdAt: new Date(),
+      
+      // Add package context
+      categoryId: context.selectedCategory?.id,
+      categoryName: context.selectedCategory?.name,
+      productId: context.selectedProduct?.id,
+      productName: context.selectedProduct?.name,
+      document_type: 'Other' // Will be set by the package workspace
+    }));
+    
+    // Add files to the main files data
+    setFilesData(prev => [...customFiles, ...prev]);
+    
+    // Upload each file to the backend
+    for (const file of files) {
+      try {
+        console.log(`Uploading file: ${file.name}`);
+        
+        // For small files, upload directly
+        if (file.size < chunkSize) {
+          const response = await uploadAPI(file, model, 1, 1, file.name, {
+            categoryId: context.selectedCategory?.id,
+            categoryName: context.selectedCategory?.name,
+            productId: context.selectedProduct?.id,
+            productName: context.selectedProduct?.name,
+            documentType: context.preSelectedDocumentType || 'Other',
+            expectedDocumentId: context.expectedDocumentId,
+            preSelectedDocumentType: context.preSelectedDocumentType
+          });
+          if (response?.status === 'Failed') {
+            throw new Error(`Upload failed: ${response.data.message}`);
+          }
+          
+          // Update file status to 'New' after successful upload
+          setFilesData(prev => prev.map(f => 
+            f.name === file.name 
+              ? { ...f, status: 'New', uploadProgress: 100 }
+              : f
+          ));
+          
+          // Link uploaded document to PackageDocument if context available
+          if (context.selectedProduct && context.selectedProduct.packageDocuments) {
+            // Try to determine document type from filename
+            const isGuidelines = file.name.toLowerCase().includes('guideline');
+            const isMatrix = file.name.toLowerCase().includes('matrix');
+            const documentType = isGuidelines ? 'Guidelines' : isMatrix ? 'Matrix' : 'Other';
+            
+            // Find matching PackageDocument
+            const matchingPkgDoc = context.selectedProduct.packageDocuments.find(
+              pd => pd.document_type === documentType && !pd.has_upload
+            );
+            
+            if (matchingPkgDoc) {
+              try {
+                await linkDocumentUpload(file.name, matchingPkgDoc.id);
+                console.log(`Linked ${file.name} to package document ${matchingPkgDoc.id}`);
+              } catch (linkError) {
+                console.error('Failed to link document to package document:', linkError);
+              }
+            }
+          }
+          
+          showSuccessToast(`${file.name} uploaded successfully`);
+        } else {
+          // For large files, use chunked upload
+          const totalChunks = Math.ceil(file.size / chunkSize);
+          const chunkProgressIncrement = 100 / totalChunks;
+          let chunkNumber = 1;
+          let start = 0;
+          let end = chunkSize;
+          
+          const uploadNextChunk = async () => {
+            if (chunkNumber <= totalChunks) {
+              const chunk = file.slice(start, end);
+              const response = await uploadAPI(chunk, model, chunkNumber, totalChunks, file.name, {
+                categoryId: context.selectedCategory?.id,
+                categoryName: context.selectedCategory?.name,
+                productId: context.selectedProduct?.id,
+                productName: context.selectedProduct?.name,
+                documentType: context.preSelectedDocumentType || 'Other',
+                expectedDocumentId: context.expectedDocumentId,
+                preSelectedDocumentType: context.preSelectedDocumentType
+              });
+              
+              if (response?.status === 'Failed') {
+                throw new Error(`Upload failed: ${response.data.message}`);
+              }
+              
+              // Update progress
+              setFilesData(prev => prev.map(f => 
+                f.name === file.name 
+                  ? { ...f, uploadProgress: Math.ceil(chunkNumber * chunkProgressIncrement) }
+                  : f
+              ));
+              
+              chunkNumber++;
+              start = end;
+              if (start + chunkSize < file.size) {
+                end = start + chunkSize;
+              } else {
+                end = file.size + 1;
+              }
+              
+              if (chunkNumber <= totalChunks) {
+                await uploadNextChunk();
+              } else {
+                // Upload complete
+                setFilesData(prev => prev.map(f => 
+                  f.name === file.name 
+                    ? { ...f, status: 'New', uploadProgress: 100 }
+                    : f
+                ));
+                
+                // Link uploaded document to PackageDocument if context available
+                if (context.selectedProduct && context.selectedProduct.packageDocuments) {
+                  // Try to determine document type from filename
+                  const isGuidelines = file.name.toLowerCase().includes('guideline');
+                  const isMatrix = file.name.toLowerCase().includes('matrix');
+                  const documentType = isGuidelines ? 'Guidelines' : isMatrix ? 'Matrix' : 'Other';
+                  
+                  // Find matching PackageDocument
+                  const matchingPkgDoc = context.selectedProduct.packageDocuments.find(
+                    pd => pd.document_type === documentType && !pd.has_upload
+                  );
+                  
+                  if (matchingPkgDoc) {
+                    try {
+                      await linkDocumentUpload(file.name, matchingPkgDoc.id);
+                      console.log(`Linked ${file.name} to package document ${matchingPkgDoc.id}`);
+                    } catch (linkError) {
+                      console.error('Failed to link document to package document:', linkError);
+                    }
+                  }
+                }
+                
+                showSuccessToast(`${file.name} uploaded successfully`);
+              }
+            }
+          };
+          
+          await uploadNextChunk();
+        }
+      } catch (error) {
+        console.error(`Error uploading file ${file.name}:`, error);
+        
+        // Update file status to 'Failed'
+        setFilesData(prev => prev.map(f => 
+          f.name === file.name 
+            ? { ...f, status: 'Failed', uploadProgress: 0 }
+            : f
+        ));
+        
+        showErrorToast(`Failed to upload ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  }, [model, setFilesData, showSuccessToast, showErrorToast]);
+
+  const handleRegisterPackageProcessing = useCallback((handler: () => void) => {
+    console.log('Registering package processing handler:', handler);
+    setPackageProcessingHandler(() => handler);
+  }, []);
+
+  const handleProcessingComplete = useCallback(() => {
+    console.log('Package processing completed, resetting loading state');
+    setIsExtractLoading(false);
   }, []);
 
   const processWaitingFilesOnRefresh = useCallback(() => {
@@ -695,10 +926,11 @@ const Content: React.FC<ContentProps> = ({
     [filesData]
   );
 
-  const disableCheck = useMemo(
-    () => (!selectedfileslength ? dropdowncheck : !newFilecheck),
-    [selectedfileslength, filesData, newFilecheck]
-  );
+  const disableCheck = useMemo(() => {
+    // In package mode, always enable the button - package structure will handle validation
+    // The button will direct users to use package interface or process available files
+    return false;
+  }, []);
 
   const showGraphCheck = useMemo(
     () => (selectedfileslength ? completedfileNo === 0 : true),
@@ -756,7 +988,9 @@ const Content: React.FC<ContentProps> = ({
   };
 
   const onClickHandler = () => {
+    console.log('Generate Graph button clicked');
     const selectedRows = childRef.current?.getSelectedRows();
+    console.log('Selected rows:', selectedRows);
     if (selectedRows?.length) {
       const expiredFilesExists = selectedRows.some(
         (c) => isFileReadyToProcess(c, true) && isExpired((c?.createdAt as Date) ?? new Date())
@@ -769,14 +1003,16 @@ const Content: React.FC<ContentProps> = ({
       } else if (largeFileExists && isGCSActive) {
         setShowConfirmationModal(true);
       } else {
-        handleGenerateGraph(selectedRows.filter((f) => isFileReadyToProcess(f, false)));
+        handleProcessPackage(selectedRows.filter((f) => isFileReadyToProcess(f, false)));
       }
     } else if (filesData.length) {
+      console.log('Processing all files from filesData:', filesData.length);
       const expiredFileExists = filesData.some((c) => isFileReadyToProcess(c, true) && isExpired(c?.createdAt as Date));
       const largeFileExists = filesData.some(
         (c) => isFileReadyToProcess(c, true) && typeof c.size === 'number' && c.size > largeFileSize
       );
       const selectAllNewFiles = filesData.filter((f) => isFileReadyToProcess(f, false));
+      console.log('Files ready to process:', selectAllNewFiles);
       const stringified = selectAllNewFiles.reduce((accu, f) => {
         const key = f.id;
         // @ts-ignore
@@ -789,8 +1025,11 @@ const Content: React.FC<ContentProps> = ({
       } else if (expiredFileExists && isGCSActive) {
         setShowExpirationModal(true);
       } else {
-        handleGenerateGraph(filesData.filter((f) => isFileReadyToProcess(f, false)));
+        handleProcessPackage(filesData.filter((f) => isFileReadyToProcess(f, false)));
       }
+    } else {
+      console.log('No files available, calling handleProcessPackage with empty array');
+      handleProcessPackage([]);
     }
   };
 
@@ -834,7 +1073,7 @@ const Content: React.FC<ContentProps> = ({
           <ConfirmationDialog
             open={showConfirmationModal}
             largeFiles={filesForProcessing}
-            extractHandler={handleGenerateGraph}
+            extractHandler={handleProcessPackage}
             onClose={() => setShowConfirmationModal(false)}
             loading={extractLoading}
             selectedRows={childRef.current?.getSelectedRows() as CustomFile[]}
@@ -847,7 +1086,7 @@ const Content: React.FC<ContentProps> = ({
           <ConfirmationDialog
             open={showExpirationModal}
             largeFiles={filesForProcessing}
-            extractHandler={handleGenerateGraph}
+            extractHandler={handleProcessPackage}
             onClose={() => setShowExpirationModal(false)}
             loading={extractLoading}
             selectedRows={childRef.current?.getSelectedRows() as CustomFile[]}
@@ -860,7 +1099,7 @@ const Content: React.FC<ContentProps> = ({
           <ConfirmationDialog
             open={showExpirationModal}
             largeFiles={filesForProcessing}
-            extractHandler={handleGenerateGraph}
+            extractHandler={handleProcessPackage}
             onClose={() => setShowExpirationModal(false)}
             loading={extractLoading}
             selectedRows={childRef.current?.getSelectedRows() as CustomFile[]}
@@ -873,7 +1112,7 @@ const Content: React.FC<ContentProps> = ({
           <ConfirmationDialog
             open={showExpirationModal}
             largeFiles={filesForProcessing}
-            extractHandler={handleGenerateGraph}
+            extractHandler={handleProcessPackage}
             onClose={() => setShowExpirationModal(false)}
             loading={extractLoading}
             selectedRows={childRef.current?.getSelectedRows() as CustomFile[]}
@@ -958,17 +1197,6 @@ const Content: React.FC<ContentProps> = ({
             </Typography>
           </div>
           <div className='enhancement-btn__wrapper'>
-            <ButtonWithToolTip
-              placement='top'
-              text='Enhance graph quality'
-              label='Graph Enhancemnet Settings'
-              className='mr-2!'
-              onClick={toggleEnhancementDialog}
-              disabled={!connectionStatus || isReadOnlyUser}
-              size={isTablet ? 'small' : 'medium'}
-            >
-              Graph Enhancement
-            </ButtonWithToolTip>
             {!connectionStatus ? (
               <SpotlightTarget
                 id='connectbutton'
@@ -994,36 +1222,40 @@ const Content: React.FC<ContentProps> = ({
           </div>
         </Flex>
 
-        <FileWorkspaceContainer
-          connectionStatus={connectionStatus}
-          setConnectionStatus={setConnectionStatus}
-          onInspect={useCallback((name) => {
-            setInspectedName(name);
-            setOpenGraphView(true);
-            setViewPoint('tableView');
-          }, [])}
-          onRetry={useCallback((id) => {
-            setRetryFile(id);
-            toggleRetryPopup();
-          }, [])}
-          onChunkView={useCallback(
-            async (name) => {
-              setDocumentName(name);
-              if (name != documentName) {
-                toggleChunkPopup();
-                if (totalPageCount) {
-                  setTotalPageCount(null);
+        <div style={{ marginTop: '100px', marginBottom: '120px' }}>
+          <FileWorkspaceContainer
+            connectionStatus={connectionStatus}
+            setConnectionStatus={setConnectionStatus}
+            onInspect={useCallback((name) => {
+              setInspectedName(name);
+              setOpenGraphView(true);
+              setViewPoint('tableView');
+            }, [])}
+            onRetry={useCallback((id) => {
+              setRetryFile(id);
+              toggleRetryPopup();
+            }, [])}
+            onChunkView={useCallback(
+              async (name) => {
+                setDocumentName(name);
+                if (name != documentName) {
+                  toggleChunkPopup();
+                  if (totalPageCount) {
+                    setTotalPageCount(null);
+                  }
+                  setCurrentPage(1);
+                  await getChunks(name, 1);
                 }
-                setCurrentPage(1);
-                await getChunks(name, 1);
-              }
-            },
-            [documentName, totalPageCount]
-          )}
-          ref={childRef}
-          handleGenerateGraph={processWaitingFilesOnRefresh}
-          onFilesUpload={handlePackageFilesUpload}
-        />
+              },
+              [documentName, totalPageCount]
+            )}
+            ref={childRef}
+            handleProcessPackage={processWaitingFilesOnRefresh}
+            onFilesUpload={handlePackageFilesUpload}
+            onProcessPackage={handleRegisterPackageProcessing}
+            onProcessingComplete={handleProcessingComplete}
+          />
+        </div>
 
         <Flex className={`p-2.5  mt-1.5 absolute bottom-0 w-full`} justifyContent='space-between' flexDirection={'row'}>
           <div>
@@ -1037,17 +1269,28 @@ const Content: React.FC<ContentProps> = ({
             />
           </div>
           <Flex flexDirection='row' gap='4' className='self-end mb-2.5' flexWrap='wrap'>
+            <ButtonWithToolTip
+              placement='top'
+              text='Enhance graph quality'
+              label='Graph Enhancement Settings'
+              className='mr-0.5'
+              onClick={toggleEnhancementDialog}
+              disabled={!connectionStatus || isReadOnlyUser}
+              size={isTablet ? 'small' : 'medium'}
+            >
+              Graph Enhancement
+            </ButtonWithToolTip>
             <SpotlightTarget id='generategraphbtn'>
               <ButtonWithToolTip
                 text={tooltips.generateGraph}
                 placement='top'
                 label='generate graph'
                 onClick={onClickHandler}
-                disabled={disableCheck || isReadOnlyUser}
+                disabled={disableCheck || isReadOnlyUser || extractLoading}
                 className='mr-0.5'
                 size={isTablet ? 'small' : 'medium'}
               >
-                {buttonCaptions.generateGraph}{' '}
+                {extractLoading ? 'Processing...' : buttonCaptions.generateGraph}{' '}
                 {selectedfileslength && !disableCheck && newFilecheck ? `(${newFilecheck})` : ''}
               </ButtonWithToolTip>
             </SpotlightTarget>

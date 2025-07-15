@@ -35,7 +35,7 @@ uvicorn score:app --reload                         # Start backend server on por
 **Testing with Both Services**:
 1. Start backend: `cd backend && source venv/bin/activate && uvicorn score:app --reload`
 2. Start frontend: `cd frontend && npm run dev`  
-3. Access application at `http://localhost:8080` (frontend proxies API calls to backend on port 8000)
+3. Access application at `http://localhost:5173` (frontend proxies API calls to backend on port 8000)
 
 ### Frontend Commands
 - **Build**: `cd frontend && npm run build`
@@ -130,6 +130,59 @@ uvicorn score:app --reload                         # Start backend server on por
    # In your shell session
    export CLAUDE_TIMEOUT=600000  # 10 minutes
    ```
+
+### Manual Testing Strategy for Server Operations
+**IMPORTANT**: Due to local system performance and timeout constraints, Claude Code should request manual testing when server operations are needed.
+
+#### When to Request Manual Testing
+- **Server startup verification**: Instead of running `uvicorn score:app --reload` to test if backend starts
+- **Frontend development server**: Instead of running `npm run dev` to test if frontend compiles
+- **End-to-end functionality testing**: When testing API endpoints, UI interactions, or full workflows
+- **Performance testing**: When testing server response times or load handling
+- **Integration testing**: When testing frontend-backend communication
+
+#### How to Request Manual Testing
+When server testing is needed, Claude Code should:
+
+1. **Request specific testing steps**:
+   ```
+   Please manually test the following:
+   1. Start backend server: `cd backend && source venv/bin/activate && uvicorn score:app --reload`
+   2. Verify server starts without errors on port 8000
+   3. Test specific endpoint: POST /api/endpoint with sample data
+   4. Report any errors or unexpected behavior
+   ```
+
+2. **Provide clear testing instructions**:
+   ```
+   To test the frontend changes:
+   1. Start frontend: `cd frontend && npm run dev`
+   2. Navigate to http://localhost:5173
+   3. Test the new feature by [specific steps]
+   4. Verify [expected behavior]
+   ```
+
+3. **Request compilation verification only**:
+   ```
+   Please verify code compiles without starting servers:
+   - Backend: `cd backend && source venv/bin/activate && python3 -c "import score; print('Backend imports successfully')"`
+   - Frontend: `cd frontend && npx tsc --noEmit` (type checking only)
+   ```
+
+#### Benefits of Manual Testing Approach
+- **Faster feedback**: No timeouts waiting for slow server startup
+- **Better error reporting**: Human can provide detailed error messages and context
+- **Real-world testing**: Human can test actual user workflows and edge cases
+- **Performance insight**: Human can report on actual performance and responsiveness
+- **Debugging capability**: Human can investigate issues that automated tools might miss
+
+#### Testing Collaboration Pattern
+1. **Claude Code**: Implements features, writes tests, requests manual verification
+2. **Human**: Runs servers, tests functionality, reports results
+3. **Claude Code**: Addresses any issues found during manual testing
+4. **Human**: Confirms fixes work as expected
+
+This approach maximizes development efficiency while ensuring thorough testing of server-dependent functionality.
 
 ## Architecture Overview
 
@@ -490,3 +543,120 @@ Each phase follows an iterative pattern:
 - **Feature branches**: Use feature branches for new development, merge to main when stable
 - **Push regularly**: Push commits to maintain backup and enable collaboration
 - **Atomic commits**: Keep commits focused on single logical changes for easier debugging and rollback
+
+## UI Implementation Standards
+
+### Frontend UI Library Standards
+
+**CRITICAL**: Follow these UI implementation standards for all frontend development to maintain consistency and avoid integration issues.
+
+#### Required UI Libraries
+- **Primary UI Framework**: `@neo4j-ndl/react` - Neo4j Design Language components
+- **Secondary UI Framework**: `@mui/material` - Material-UI components for extended functionality
+- **Icon Library**: `@mui/icons-material` - Material-UI icons (DO NOT use other icon libraries)
+- **Styling**: Material-UI `sx` prop and `styled` components for custom styling
+
+#### UI Component Hierarchy
+1. **First Priority**: Use `@neo4j-ndl/react` components when available
+   ```typescript
+   import { Button, Typography, DataGrid } from '@neo4j-ndl/react';
+   ```
+
+2. **Second Priority**: Use `@mui/material` components for extended functionality
+   ```typescript
+   import { Box, Paper, Alert, LinearProgress } from '@mui/material';
+   ```
+
+3. **Icons**: ALWAYS use `@mui/icons-material` for all icons
+   ```typescript
+   import { 
+     PlayArrow as PlayArrowIcon,
+     Folder as FolderIcon,
+     FolderOpen as FolderOpenIcon,
+     Description as DocumentIcon 
+   } from '@mui/icons-material';
+   ```
+
+#### Icon Usage Standards
+- **Import Pattern**: Always import with descriptive alias using `IconName as DescriptiveIcon`
+- **Size Consistency**: Use consistent icon sizes (`sx={{ width: 16, height: 16 }}` for small, `sx={{ width: 24, height: 24 }}` for medium)
+- **Color Integration**: Use theme colors via `sx` prop for consistent theming
+- **Never Use**: Font Awesome, Heroicons, or other icon libraries
+
+#### Theme Integration
+- **Theme Provider**: Use `ThemeWrapper` for consistent theming across Neo4j NDL and Material-UI
+- **Color Variables**: Use CSS custom properties for theme colors
+   ```typescript
+   style={{ color: 'var(--theme-palette-text-secondary)' }}
+   ```
+- **Dark Mode**: Ensure all components support both light and dark themes
+
+#### Layout and Spacing Standards
+- **Container Spacing**: Use consistent padding and margins (`p: 2`, `mb: 2`, etc.)
+- **Component Gaps**: Use `gap` prop for flex layouts (`gap={2}`)
+- **Responsive Design**: Use breakpoints and responsive props where needed
+- **Absolute Positioning**: Account for header (100px) and footer (120px) when using absolute positioning
+
+#### Component Architecture
+- **File Structure**: Organize components by feature in `src/components/FeatureName/`
+- **Props Interface**: Always define TypeScript interfaces for component props
+- **Event Handlers**: Use `useCallback` for event handlers to prevent unnecessary re-renders
+- **State Management**: Use React Context for shared state, local state for component-specific data
+
+#### Code Quality Standards
+- **TypeScript**: All components must be written in TypeScript with proper types
+- **Error Handling**: Implement proper error boundaries and error states
+- **Accessibility**: Follow WCAG guidelines for accessible UI components
+- **Performance**: Use React.memo, useMemo, and useCallback for performance optimization
+
+#### Common Patterns
+```typescript
+// Standard component structure
+import React, { useState, useCallback } from 'react';
+import { Button, Typography } from '@neo4j-ndl/react';
+import { Box, Paper } from '@mui/material';
+import { PlayArrow as PlayArrowIcon } from '@mui/icons-material';
+
+interface ComponentProps {
+  title: string;
+  onAction: () => void;
+  disabled?: boolean;
+}
+
+export const Component: React.FC<ComponentProps> = ({
+  title,
+  onAction,
+  disabled = false
+}) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handleAction = useCallback(() => {
+    setIsProcessing(true);
+    onAction();
+  }, [onAction]);
+
+  return (
+    <Paper sx={{ p: 2, mb: 2 }}>
+      <Typography variant="h6" sx={{ mb: 1 }}>
+        {title}
+      </Typography>
+      <Button
+        variant="contained"
+        startIcon={<PlayArrowIcon sx={{ width: 16, height: 16 }} />}
+        onClick={handleAction}
+        disabled={disabled || isProcessing}
+      >
+        {isProcessing ? 'Processing...' : 'Start Process'}
+      </Button>
+    </Paper>
+  );
+};
+```
+
+#### Testing Standards
+- **Component Testing**: Write unit tests for all new components
+- **Integration Testing**: Test component interactions and data flow
+- **Visual Testing**: Ensure consistent styling across light/dark themes
+- **Accessibility Testing**: Verify keyboard navigation and screen reader compatibility
+
+**Remember**: Consistency is key. Always follow these patterns to maintain a cohesive user experience across the application.

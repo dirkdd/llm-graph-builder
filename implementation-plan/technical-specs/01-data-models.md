@@ -1,60 +1,178 @@
 # Technical Specifications: Data Models
 
+## 🚀 **UPDATED FOR TWO-STRUCTURE ARCHITECTURE + 4-TIER HIERARCHY**
+This document defines the comprehensive data models for the enhanced LLM Graph Builder system with **Two-Structure Architecture** separating Package Management from Knowledge Extraction, using a **4-tier hierarchical structure**: DocumentPackage → Category → Product → Document.
+
 ## Overview
-This document defines the comprehensive data models for the enhanced LLM Graph Builder system, including document packages, hierarchical navigation, matrix classifications, and multi-layer knowledge graph structures.
+This document has been updated to reflect the implemented **Two-Structure Architecture** with clear separation between package management (templates/expectations) and knowledge extraction (processed content), maintaining 4-tier hierarchical structure with immediate node creation and rich metadata support for enhanced LLM processing.
 
 ## Core Data Models
 
-### 1. Document Package Models
+### 1. ✅ **IMPLEMENTED: Two-Structure Architecture Models**
 
-#### DocumentPackage
+## Structure 1: Package Management (Templates/Expectations)
+
+These models represent the expected document structure and serve as templates for what should be processed.
+
+#### DocumentPackage (Package Management Root)
 ```python
 class DocumentPackage:
-    package_id: str  # Format: "pkg_{category}_{name}_{version}"
+    package_id: str  # Format: "pkg_{timestamp}_{name}"
     package_name: str
+    description: str
+    status: str  # ACTIVE, ARCHIVED
+    workspace_id: str
     tenant_id: str
-    category: str  # NQM, RTL, SBC, CONV
-    version: str  # Semantic versioning
-    status: str  # DRAFT, ACTIVE, ARCHIVED
     created_at: datetime
     updated_at: datetime
-    created_by: str
     
-    # Structure
-    documents: List[DocumentDefinition]
-    relationships: List[PackageRelationship]
-    processing_rules: ProcessingConfiguration
-    
-    # Template
-    template_mappings: Dict[str, TemplateMapping]
-    validation_rules: List[ValidationRule]
-    
-    # Metrics
-    complexity_score: float
-    completeness_score: float
-    quality_score: float
+    # Package management structure - contains categories as templates
 ```
 
-#### DocumentDefinition
+#### MortgageCategory (Package Management)
+```python
+class MortgageCategory:
+    category_code: str  # NQM, RTL, SBC, CONV
+    display_name: str  # "Non-Qualified Mortgage"
+    description: str  # Rich description for LLM context
+    key_characteristics: List[str]
+    regulatory_framework: str
+    typical_products: List[str]
+    risk_profile: str
+    created_at: datetime
+    updated_at: datetime
+    # Package management version - template definition
+```
+
+#### Product (Package Management)
+```python
+class Product:
+    product_id: str
+    product_name: str
+    description: str  # Rich description for LLM context
+    product_type: str  # core, supplemental, conditional
+    key_features: List[str]
+    underwriting_highlights: List[str]
+    target_borrowers: List[str]
+    tier_level: int
+    processing_priority: int
+    created_at: datetime
+    updated_at: datetime
+    # Package management version - template definition
+```
+
+#### PackageDocument (Document Templates)
+```python
+class PackageDocument:
+    document_id: str
+    document_name: str
+    document_type: str  # Guidelines, Matrix, Supporting, Other
+    has_upload: bool  # Whether a file has been uploaded
+    processing_status: str  # PENDING, PROCESSING, COMPLETED, FAILED
+    expected_structure: NavigationStructure
+    required_sections: List[str]
+    optional_sections: List[str]
+    chunking_strategy: str
+    entity_types: List[str]
+    validation_schema: Dict
+    quality_thresholds: QualityMetrics
+    # Template for what document should contain
+```
+
+## Structure 2: Knowledge Extraction (Content/Results)
+
+These models represent the actual extracted knowledge and processed content.
+
+#### DocumentPackage (Knowledge Extraction Root)  
+```python
+class DocumentPackage:
+    package_id: str  # Same as package management version
+    package_name: str
+    description: str
+    workspace_id: str
+    tenant_id: str
+    knowledge_extracted: bool = True  # Distinguishes from package mgmt
+    last_processed: datetime
+    created_at: datetime
+    updated_at: datetime
+    
+    # Knowledge extraction structure - contains actual extracted content
+```
+
+#### MortgageCategory (Knowledge Extraction)
+```python
+class MortgageCategory:
+    category_code: str  # Same as package management
+    display_name: str
+    description: str
+    key_characteristics: List[str]
+    regulatory_framework: str
+    typical_products: List[str]
+    risk_profile: str
+    knowledge_extracted: bool = True  # Distinguishes from package mgmt
+    last_processed: datetime
+    created_at: datetime
+    updated_at: datetime
+    # Knowledge version - contains actual extracted knowledge
+```
+
+#### Product (Knowledge Extraction)
+```python
+class Product:
+    product_id: str  # Same as package management
+    product_name: str
+    description: str
+    product_type: str
+    key_features: List[str]
+    underwriting_highlights: List[str]
+    target_borrowers: List[str]
+    knowledge_extracted: bool = True  # Distinguishes from package mgmt
+    last_processed: datetime
+    tier_level: int
+    processing_priority: int
+    created_at: datetime
+    updated_at: datetime
+    # Knowledge version - contains actual extracted knowledge
+```
+
+#### DocumentDefinition (ENHANCED)
 ```python
 class DocumentDefinition:
     document_id: str
     document_type: str  # guidelines, matrix, rate_sheet
     document_name: str
     
+    # 4-Tier Association (NEW)
+    associated_to: str  # "product" or "program"
+    parent_id: str  # ID of parent product or program
+    association_rules: Dict[str, Any]  # Rules for association
+    
     # Structure
     expected_structure: NavigationStructure
     required_sections: List[str]
     optional_sections: List[str]
     
-    # Processing
+    # Processing (ENHANCED for 4-tier context)
     chunking_strategy: str
     entity_types: List[str]
     matrix_configuration: Optional[MatrixConfig]
+    program_context: Optional[ProgramContext]  # NEW: Program-specific context
     
     # Validation
     validation_schema: Dict
     quality_thresholds: QualityMetrics
+```
+
+#### ProgramContext (NEW - Implemented)
+```python
+class ProgramContext:
+    program_id: str
+    program_name: str
+    loan_limits: Dict[str, Any]
+    rate_adjustments: List[str]
+    specific_features: List[str]
+    qualification_criteria: List[str]
+    # Enhanced LLM processing context for program-specific documents
 ```
 
 ### 2. Navigation and Hierarchy Models
@@ -379,30 +497,68 @@ class ValidationRule:
 
 ## Database Schema Mapping
 
-### Neo4j Node Labels
-- `:DocumentPackage`
-- `:Document`
+### ✅ **IMPLEMENTED: Neo4j Two-Structure Schema**
+
+#### Structure 1: Package Management Nodes
+- `:DocumentPackage` ✅ **Package management root container**
+- `:MortgageCategory` ✅ **Category template (no knowledge_extracted flag)**
+- `:Product` ✅ **Product template (no knowledge_extracted flag)**
+- `:PackageDocument` ✅ **Document templates with expected structure**
+- `:Document` ✅ **Uploaded document files**
+
+#### Structure 2: Knowledge Extraction Nodes  
+- `:DocumentPackage {knowledge_extracted: true}` ✅ **Knowledge root container**
+- `:MortgageCategory {knowledge_extracted: true}` ✅ **Extracted category knowledge**
+- `:Product {knowledge_extracted: true}` ✅ **Extracted product knowledge**
+- `:Guidelines` ✅ **Extracted guidelines content**
+- `:Matrix` ✅ **Extracted matrix content**
 - `:NavigationChapter`
 - `:NavigationSection`
 - `:NavigationSubsection`
 - `:DecisionNode`
-- `:MatrixCell`
 - `:Entity`
-- `:BusinessRule`
 - `:Chunk`
 
-### Relationship Types
-- `:CONTAINS`
-- `:HAS_STRUCTURE`
-- `:REFERENCES`
-- `:ELABORATES`
-- `:CONFLICTS`
-- `:SUPERSEDES`
-- `:LEADS_TO`
-- `:QUALIFIES_FOR`
-- `:PARENT_OF`
-- `:CHILD_OF`
-- `:EXTRACTED_FROM`
+### ✅ **IMPLEMENTED: Two-Structure Relationships**
+
+#### Package Management Relationships
+- `:CONTAINS_CATEGORY` ✅ **DocumentPackage → MortgageCategory**
+- `:CONTAINS` ✅ **MortgageCategory → Product → PackageDocument**
+- `:HAS_UPLOADED` ✅ **PackageDocument → Document (when uploaded)**
+
+#### Knowledge Extraction Relationships
+- `:CONTAINS_CATEGORY` ✅ **Knowledge DocumentPackage → Knowledge MortgageCategory**
+- `:CONTAINS` ✅ **Knowledge MortgageCategory → Knowledge Product**
+- `:EXTRACTED_FROM_DOCUMENT` ✅ **Knowledge Product → Document**
+- `:PROCESSED_INTO` ✅ **Document → Guidelines/Matrix (during processing)**
+
+#### Cross-Structure Relationships
+- Both structures share the same `package_id` for linking
+- `knowledge_extracted: true` flag distinguishes knowledge nodes
+- Documents serve as bridge between both structures
+
+### ✅ **IMPLEMENTED: Two-Structure Graph Architecture**
+
+#### Package Management Structure
+```
+DocumentPackage {package_id: "pkg_123"}
+    ├── -[:CONTAINS_CATEGORY]-> MortgageCategory {category_code: "NQM"}
+    │       └── -[:CONTAINS]-> Product {product_id: "prod_123"}
+    │               └── -[:CONTAINS]-> PackageDocument {document_type: "Guidelines"}
+    │                       ↑
+    │               Document {fileName: "file.pdf"} <-[:HAS_UPLOADED]
+    └── -[:CONTAINS_CATEGORY]-> MortgageCategory {category_code: "QM"}
+```
+
+#### Knowledge Extraction Structure  
+```
+DocumentPackage {package_id: "pkg_123", knowledge_extracted: true}
+    ├── -[:CONTAINS_CATEGORY]-> MortgageCategory {category_code: "NQM", knowledge_extracted: true}
+    │       └── -[:CONTAINS]-> Product {product_id: "prod_123", knowledge_extracted: true}
+    │               └── -[:EXTRACTED_FROM_DOCUMENT]-> Document {fileName: "file.pdf"}
+    │                       └── -[:PROCESSED_INTO]-> Guidelines {content: "extracted..."}
+    └── -[:CONTAINS_CATEGORY]-> MortgageCategory {category_code: "QM", knowledge_extracted: true}
+```
 
 ## API Response Models
 

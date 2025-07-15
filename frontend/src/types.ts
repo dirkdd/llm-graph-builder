@@ -41,6 +41,7 @@ export interface CustomFileBase extends Partial<globalThis.File> {
   package_name?: string;
   processing_type?: 'standard' | 'package';
   document_type?: 'Guidelines' | 'Matrix' | 'Supporting' | 'Other';
+  expected_document_id?: string; // PackageDocument template ID for pre-upload type selection
   expected_structure?: {
     navigation_depth: number;
     required_sections: string[];
@@ -1240,6 +1241,16 @@ export interface PackageContext {
   error: string | null;
 }
 
+export interface ChatPackageContext {
+  packageId: string;
+  packageName: string;
+  documentTypes: string[];
+  totalNodes: number;
+  totalRelationships: number;
+  categories: string[];
+  products: string[];
+}
+
 // Package Processing Status Types
 export interface PackageProcessingStatus {
   package_id: string;
@@ -1305,11 +1316,31 @@ export interface PackageCategory {
   color?: 'primary' | 'secondary' | 'success' | 'warning';
 }
 
+export interface PackageDocument {
+  id: string;
+  document_name: string;
+  document_type: 'Guidelines' | 'Matrix' | 'Supporting' | 'Other';
+  expected_structure?: any;
+  validation_rules?: any;
+  required_sections?: string[];
+  optional_sections?: string[];
+  has_upload: boolean;
+  processing_status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  uploaded_file?: CustomFile;
+  created_at: string;
+  // Program-level association for matrices
+  level?: 'product' | 'program';
+  programCode?: string;
+  programName?: string;
+}
+
 export interface PackageProduct {
   id: string;
   name: string;
+  description?: string;
   categoryId: string;
-  documents: CustomFile[];
+  documents: CustomFile[]; // For backwards compatibility
+  packageDocuments?: PackageDocument[]; // New: expected documents
   completionStatus: PackageCompletionStatus;
   created_at: string;
   template_type?: string;
@@ -1328,6 +1359,9 @@ export interface PackageSelectionContext {
   selectedProduct?: PackageProduct;
   selectedFiles?: CustomFile[];
   selectionType: 'none' | 'category' | 'product' | 'file' | 'multiple';
+  // Enhanced context for document type slots
+  expectedDocumentId?: string;
+  preSelectedDocumentType?: string;
 }
 
 export interface PackageHierarchy {

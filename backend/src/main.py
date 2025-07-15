@@ -11,6 +11,7 @@ from src.shared.schema_extraction import schema_extraction_from_text
 from dotenv import load_dotenv
 from datetime import datetime
 import logging
+import time
 from src.create_chunks import CreateChunksofDocument
 from src.graphDB_dataAccess import graphDBdataAccess
 from src.document_sources.local_file import get_documents_from_file_by_path
@@ -32,10 +33,9 @@ import shutil
 import urllib.parse
 import json
 from src.shared.llm_graph_builder_exception import LLMGraphBuilderException
-
-# Task 11: Import enhanced chunking pipeline
+# Enhanced chunking pipeline integration (Phase 1)
 try:
-    from src.enhanced_chunking import get_enhanced_chunks_pipeline, enhanced_processing_chunks_pipeline
+    from src.enhanced_chunking import EnhancedChunkingPipeline, get_enhanced_chunks_pipeline, enhanced_processing_chunks_pipeline
     ENHANCED_CHUNKING_AVAILABLE = True
     logging.info("Enhanced chunking pipeline imported successfully")
 except ImportError as e:
@@ -45,6 +45,100 @@ except ImportError as e:
 warnings.filterwarnings("ignore")
 load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(message)s',level='INFO')
+
+# Two-Structure Architecture Functions
+
+def discover_programs_from_guidelines(graph_documents, file_name, product_id, graph_db):
+    """Discover program names from guidelines document entities and create Program nodes"""
+    discovered_programs = []
+    
+    try:
+        # Look for program mentions in entities
+        program_patterns = [
+            r'(?:IO|ARM|FHA|VA|USDA|Jumbo|Prime|Non-Prime|Bank Statement|Asset|DSCR)[\s\-]*(Titanium|Plus|Select|Core|Prime|Elite|Advantage|Premier)',
+            r'(?:Program|Product)[\s:]+([A-Z][a-zA-Z\s\-]+)',
+            r'([A-Z][a-zA-Z\s\-]+)(?:\s+Program|\s+Product)',
+        ]
+        
+        # Extract program names from entities
+        for doc in graph_documents:
+            if hasattr(doc, 'nodes') and doc.nodes:
+                for node in doc.nodes:
+                    # Check if node text contains program names
+                    node_text = node.id if hasattr(node, 'id') else str(node)
+                    
+                    for pattern in program_patterns:
+                        matches = re.findall(pattern, node_text, re.IGNORECASE)
+                        for match in matches:
+                            program_name = match.strip()
+                            if len(program_name) > 2 and program_name not in discovered_programs:
+                                discovered_programs.append(program_name)
+        
+        # Create Program nodes for discovered programs
+        for program_name in discovered_programs:
+            program_data = {
+                'program_id': f"prog_{program_name.lower().replace(' ', '_')}_{int(time.time())}",
+                'program_name': program_name,
+                'program_code': program_name.upper().replace(' ', '_'),
+                'description': f"{program_name} program discovered from {file_name}",
+                'loan_limits': {},
+                'rate_adjustments': [],
+                'feature_differences': [],
+                'qualification_criteria': []
+            }
+            
+            success = graph_db.create_discovered_program_node(
+                program_data, 
+                product_id, 
+                file_name
+            )
+            
+            if success:
+                logging.info(f"Created discovered program node: {program_name}")
+        
+        return discovered_programs
+        
+    except Exception as e:
+        logging.error(f"Error discovering programs: {str(e)}")
+        return []
+
+def create_processed_content_nodes(file_name, document_type, content_data, graph_db, program_id=None):
+    """Create Guidelines or Matrix nodes from processed content"""
+    try:
+        if document_type == 'Guidelines':
+            # Extract sections and criteria from content
+            guidelines_data = {
+                'content': content_data.get('content', ''),
+                'sections': content_data.get('sections', []),
+                'discovered_programs': content_data.get('discovered_programs', []),
+                'eligibility_criteria': content_data.get('eligibility_criteria', {}),
+                'documentation_requirements': content_data.get('documentation_requirements', {}),
+                'processing_rules': content_data.get('processing_rules', {})
+            }
+            
+            success = graph_db.create_processed_guidelines_node(file_name, guidelines_data)
+            if success:
+                logging.info(f"Created Guidelines node for {file_name}")
+                
+        elif document_type == 'Matrix':
+            # Extract matrix data
+            matrix_data = {
+                'content': content_data.get('content', ''),
+                'dimensions': content_data.get('dimensions', []),
+                'cells': content_data.get('cells', []),
+                'ranges': content_data.get('ranges', {}),
+                'matrix_type': content_data.get('matrix_type', 'pricing')
+            }
+            
+            success = graph_db.create_processed_matrix_node(file_name, matrix_data, program_id)
+            if success:
+                logging.info(f"Created Matrix node for {file_name}")
+                
+        return success
+        
+    except Exception as e:
+        logging.error(f"Error creating processed content nodes: {str(e)}")
+        return False
 
 def create_source_node_graph_url_s3(graph, model, source_url, aws_access_key_id, aws_secret_access_key, source_type):
     
@@ -332,11 +426,41 @@ async def processing_source(uri, userName, password, database, model, file_name,
   graphDb_data_Access = graphDBdataAccess(graph)
   create_chunk_vector_index(graph)
   start_get_chunkId_chunkDoc_list = time.time()
-  total_chunks, chunkId_chunkDoc_list = get_chunkId_chunkDoc_list(graph, file_name, pages, token_chunk_size, chunk_overlap, retry_condition)
+  
+  # Detect package processing and use enhanced chunking for Guidelines
+  use_enhanced_chunking = False
+  
+  # First check if document has package metadata stored during upload
+  if ENHANCED_CHUNKING_AVAILABLE:
+    # Check if document was uploaded as part of a package
+    package_doc_info = graphDb_data_Access.get_document_package_info(file_name)
+    if package_doc_info and package_doc_info.get('created_via_package'):
+      use_enhanced_chunking = True
+      logging.info(f"Package document detected for {file_name} - using enhanced hierarchical chunking based on stored package metadata")
+    elif additional_instructions:
+      # Check for package context indicators in additional instructions
+      package_indicators = ["PACKAGE CONTEXT", "package-aware", "hierarchical chunking", "Document type: Guidelines"]
+      if any(indicator in additional_instructions for indicator in package_indicators):
+        use_enhanced_chunking = True
+        logging.info(f"Package processing detected for {file_name} - using enhanced hierarchical chunking based on additional instructions")
+  
+  if use_enhanced_chunking:
+    # Use Phase 1 enhanced chunking pipeline for package documents
+    total_chunks, chunkId_chunkDoc_list = get_enhanced_chunks_pipeline(
+      graph, file_name, pages, token_chunk_size, chunk_overlap, retry_condition, additional_instructions
+    )
+  else:
+    # Use standard chunking for non-package documents
+    total_chunks, chunkId_chunkDoc_list = get_chunkId_chunkDoc_list(
+      graph, file_name, pages, token_chunk_size, chunk_overlap, retry_condition
+    )
+  
   end_get_chunkId_chunkDoc_list = time.time()
   elapsed_get_chunkId_chunkDoc_list = end_get_chunkId_chunkDoc_list - start_get_chunkId_chunkDoc_list
-  logging.info(f'Time taken to create list chunkids with chunk document: {elapsed_get_chunkId_chunkDoc_list:.2f} seconds')
+  chunking_type = "enhanced hierarchical" if use_enhanced_chunking else "standard"
+  logging.info(f'Time taken to create list chunkids with chunk document ({chunking_type}): {elapsed_get_chunkId_chunkDoc_list:.2f} seconds')
   uri_latency["create_list_chunk_and_document"] = f'{elapsed_get_chunkId_chunkDoc_list:.2f}'
+  uri_latency["chunking_type"] = chunking_type
   uri_latency["total_chunks"] = total_chunks
 
   start_status_document_node = time.time()
@@ -395,7 +519,22 @@ async def processing_source(uri, userName, password, database, model, file_name,
           break
         else:
           processing_chunks_start_time = time.time()
-          node_count,rel_count,latency_processed_chunk = await processing_chunks(selected_chunks,graph,uri, userName, password, database,file_name,model,allowedNodes,allowedRelationship,chunks_to_combine,node_count, rel_count, additional_instructions)
+          
+          # Use enhanced processing pipeline for package documents
+          if use_enhanced_chunking and ENHANCED_CHUNKING_AVAILABLE:
+            # Use Phase 1 enhanced processing pipeline with relationship detection
+            node_count, rel_count, latency_processed_chunk = await enhanced_processing_chunks_pipeline(
+              selected_chunks, None, {}, graph, uri, userName, password, database, 
+              file_name, model, allowedNodes, allowedRelationship, chunks_to_combine, 
+              node_count, rel_count, additional_instructions
+            )
+          else:
+            # Use standard processing pipeline
+            node_count, rel_count, latency_processed_chunk = await processing_chunks(
+              selected_chunks, graph, uri, userName, password, database, file_name, model, 
+              allowedNodes, allowedRelationship, chunks_to_combine, node_count, rel_count, additional_instructions
+            )
+          
           processing_chunks_end_time = time.time()
           processing_chunks_elapsed_end_time = processing_chunks_end_time - processing_chunks_start_time
           logging.info(f"Time taken {update_graph_chunk_processed} chunks processed upto {select_chunks_upto} completed in {processing_chunks_elapsed_end_time:.2f} seconds for file name {file_name}")
@@ -518,6 +657,77 @@ async def processing_chunks(chunkId_chunkDoc_list,graph,uri, userName, password,
   elapsed_relationship = end_relationship - start_relationship
   logging.info(f'Time taken to create relationship between chunk and entities: {elapsed_relationship:.2f} seconds')
   latency_processing_chunk["relationship_between_chunk_entity"] = f'{elapsed_relationship:.2f}'
+  
+  # Two-Structure Architecture: Program Discovery and Content Node Creation
+  graphDb_data_Access_local = graphDBdataAccess(graph)
+  
+  # Check if document has package context
+  document_result = graphDb_data_Access_local.get_current_status_document_node(file_name)
+  if document_result and len(document_result) > 0:
+    doc_metadata = document_result[0]
+    document_type = doc_metadata.get('documentType')
+    product_id = doc_metadata.get('productId')
+    
+    if document_type and product_id:
+      logging.info(f"Processing {document_type} document with product context")
+      
+      # Create knowledge structure nodes for this document
+      category_id = doc_metadata.get('categoryId') 
+      if category_id:
+        knowledge_metadata = {
+          'category_id': category_id,
+          'product_id': product_id,
+          'document_type': document_type
+        }
+        
+        knowledge_success = graphDb_data_Access_local.create_knowledge_structure_nodes(
+          file_name, 
+          knowledge_metadata
+        )
+        
+        if knowledge_success:
+          logging.info(f"Created knowledge structure nodes for {file_name}")
+        else:
+          logging.warning(f"Failed to create knowledge structure nodes for {file_name}")
+      
+      # For Guidelines documents, discover programs
+      if document_type == 'Guidelines':
+        start_program_discovery = time.time()
+        discovered_programs = discover_programs_from_guidelines(
+          cleaned_graph_documents, 
+          file_name, 
+          product_id,
+          graphDb_data_Access_local
+        )
+        end_program_discovery = time.time()
+        elapsed_program_discovery = end_program_discovery - start_program_discovery
+        logging.info(f'Time taken for program discovery: {elapsed_program_discovery:.2f} seconds')
+        latency_processing_chunk["program_discovery"] = f'{elapsed_program_discovery:.2f}'
+        
+        # Create Guidelines content node
+        content_data = {
+          'content': '\n'.join([chunk['chunk_doc'].page_content for chunk in chunkId_chunkDoc_list]),
+          'sections': [],  # Could be extracted from navigation structure
+          'discovered_programs': discovered_programs,
+          'eligibility_criteria': {},
+          'documentation_requirements': {},
+          'processing_rules': {}
+        }
+        
+        create_processed_content_nodes(file_name, 'Guidelines', content_data, graphDb_data_Access_local)
+        
+      # For Matrix documents, create Matrix content node
+      elif document_type == 'Matrix':
+        content_data = {
+          'content': '\n'.join([chunk['chunk_doc'].page_content for chunk in chunkId_chunkDoc_list]),
+          'dimensions': [],  # Could be extracted from matrix structure
+          'cells': [],
+          'ranges': {},
+          'matrix_type': 'pricing'
+        }
+        
+        # TODO: Link to appropriate program if identifiable
+        create_processed_content_nodes(file_name, 'Matrix', content_data, graphDb_data_Access_local)
   
   # Task 11: Process enhanced relationships if available
   if ENHANCED_CHUNKING_AVAILABLE and enhanced_data:
@@ -715,7 +925,7 @@ def merge_chunks_local(file_name, total_chunks, chunk_dir, merged_dir):
   
 
 
-def upload_file(graph, model, chunk, chunk_number:int, total_chunks:int, originalname, uri, chunk_dir, merged_dir):
+def upload_file(graph, model, chunk, chunk_number:int, total_chunks:int, originalname, uri, chunk_dir, merged_dir, package_context=None):
   
   gcs_file_cache = os.environ.get('GCS_FILE_CACHE')
   logging.info(f'gcs file cache: {gcs_file_cache}')
@@ -741,6 +951,13 @@ def upload_file(graph, model, chunk, chunk_number:int, total_chunks:int, origina
         file_size = merge_chunks_local(originalname, int(total_chunks), chunk_dir, merged_dir)
       
       logging.info("File merged successfully")
+      
+      # Add diagnostic logging for problematic files
+      if originalname and 'titanium' in originalname.lower():
+          logging.warning(f"🔍 DIAGNOSTIC: Processing problematic file {originalname}")
+          logging.warning(f"🔍 File size: {file_size} bytes")
+          logging.warning(f"🔍 Package context: {package_context}")
+          
       file_extension = originalname.split('.')[-1]
       obj_source_node = sourceNode()
       obj_source_node.file_name = originalname.strip() if isinstance(originalname, str) else originalname
@@ -758,6 +975,50 @@ def upload_file(graph, model, chunk, chunk_number:int, total_chunks:int, origina
       graphDb_data_Access = graphDBdataAccess(graph)
         
       graphDb_data_Access.create_source_node(obj_source_node)
+      
+      # If package context is provided, create document with enhanced metadata for later processing
+      if package_context and package_context.get('productId'):
+          logging.info(f"Enhancing document with package context: {package_context}")
+          
+          try:
+              # Add package metadata to the Document node for later processing
+              package_metadata = {
+                  'categoryId': package_context.get('categoryId'),
+                  'categoryName': package_context.get('categoryName'),
+                  'productId': package_context.get('productId'),
+                  'productName': package_context.get('productName'),
+                  'documentType': package_context.get('documentType', 'Other'),
+                  'expectedDocumentId': package_context.get('expectedDocumentId'),
+                  'package_upload': True,
+                  'created_via_package': True
+              }
+              
+              # Update the Document node with package metadata
+              graphDb_data_Access.add_package_metadata_to_document(originalname, package_metadata)
+              logging.info(f"Added package metadata to Document {originalname}")
+              
+              # If expectedDocumentId is provided, immediately create the relationship
+              if package_context.get('expectedDocumentId'):
+                  expected_doc_id = package_context.get('expectedDocumentId')
+                  logging.info(f"Creating relationship: Document '{originalname}' -> PackageDocument '{expected_doc_id}'")
+                  
+                  success = graphDb_data_Access.link_uploaded_document_to_package_document(
+                      originalname, 
+                      expected_doc_id
+                  )
+                  if success:
+                      logging.info(f"✅ Successfully linked {originalname} to PackageDocument {expected_doc_id}")
+                  else:
+                      logging.error(f"❌ Failed to link {originalname} to PackageDocument {expected_doc_id}")
+                      # Add debug information
+                      logging.error(f"Debug info - Document: {originalname}, Expected PackageDocument ID: {expected_doc_id}")
+              else:
+                  logging.warning(f"No expectedDocumentId provided for {originalname}. Package context: {package_context}")
+              
+          except Exception as e:
+              logging.error(f"Error adding package metadata to document: {str(e)}")
+              # Continue anyway - document upload should still succeed
+      
       return {'file_size': file_size, 'file_name': originalname, 'file_extension':file_extension, 'message':f"Chunk {chunk_number}/{total_chunks} saved"}
   return f"Chunk {chunk_number}/{total_chunks} saved"
 

@@ -157,7 +157,7 @@ export const largeFileSize = process.env.VITE_LARGE_FILE_SIZE
   : 5 * 1024 * 1024;
 
 export const tooltips = {
-  generateGraph: 'Generate graph from selected files',
+  generateGraph: 'Process package with enhanced hierarchical chunking',
   deleteFile: 'Select one or more files to delete',
   showGraph: 'Preview generated graph.',
   bloomGraph: 'Visualize the graph in Bloom',
@@ -192,7 +192,7 @@ export const buttonCaptions = {
   exploreGraphWithBloom: 'Explore Graph',
   showPreviewGraph: 'Preview Graph',
   deleteFiles: 'Delete Files',
-  generateGraph: 'Generate Graph',
+  generateGraph: 'Process Package',
   dropzoneSpan: 'Documents, Images, Unstructured text',
   youtube: 'Youtube',
   gcs: 'GCS',

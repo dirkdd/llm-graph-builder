@@ -26,7 +26,7 @@ const DropdownComponent: React.FC<ReusableDropdownProps> = ({
   const allOptions = useMemo(() => options, [options]);
   return (
     <>
-      <div className={view === 'ContentView' ? 'w-[150px]' : ''}>
+      <div className={view === 'ContentView' ? 'w-[300px]' : ''}>
         <SpotlightTarget id='llmdropdown'>
           <Select
             type='select'

@@ -24,7 +24,6 @@ import { HeaderProp } from '../../types';
 import { downloadClickHandler, getIsLoading } from '../../utils/Utils';
 import Profile from '../User/Profile';
 import { useAuth0 } from '@auth0/auth0-react';
-import { PackageManagementButton } from '../PackageManagement/PackageManagementButton';
 
 const Header: React.FC<HeaderProp> = ({ chatOnly, deleteOnClick, setOpenConnection, showBackButton }) => {
   const { colorMode, toggleColorMode } = useContext(ThemeWrapperContext);
@@ -151,7 +150,6 @@ const Header: React.FC<HeaderProp> = ({ chatOnly, deleteOnClick, setOpenConnecti
                   >
                     <ArrowTopRightOnSquareIconOutline />
                   </IconButtonWithToolTip>
-                  <PackageManagementButton />
                   {!SKIP_AUTH && <Profile />}
                   {pathname === '/readonly' &&
                     (!connectionStatus ? (

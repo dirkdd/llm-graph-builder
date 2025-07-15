@@ -1,7 +1,10 @@
 # API Specifications: Endpoints
 
+## 🚀 **UPDATED FOR 4-TIER HIERARCHY IMPLEMENTATION**
+This document defines all API endpoints for the enhanced LLM Graph Builder system with **4-tier hierarchical architecture**: Category → Product → Program → Document.
+
 ## Overview
-This document defines all API endpoints for the enhanced LLM Graph Builder system, including document package management, hierarchical processing, matrix classification, knowledge graph operations, and production features.
+This document has been updated to reflect the implemented 4-tier hierarchical structure with immediate node creation and rich metadata support for enhanced LLM processing.
 
 ## API Architecture
 
@@ -9,7 +12,7 @@ This document defines all API endpoints for the enhanced LLM Graph Builder syste
 ```
 Production: https://api.llm-graph-builder.com/api/v3
 Staging: https://staging-api.llm-graph-builder.com/api/v3
-Development: http://localhost:8000/api/v3
+Development: http://localhost:8000/api/v3  ✅ IMPLEMENTED
 ```
 
 ### Authentication
@@ -34,11 +37,64 @@ Development: http://localhost:8000/api/v3
 }
 ```
 
-## Phase 1: Document Package APIs
+## Phase 1: Document Package APIs (4-Tier Hierarchy)
+
+### ✅ **IMPLEMENTED: 4-Tier Package Management**
+
+#### ✅ **IMPLEMENTED: Category Management**
+```http
+POST /api/v3/categories
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "category_code": "NQM",
+  "display_name": "Non-Qualified Mortgage",
+  "description": "Mortgage products that do not meet QM standards but follow ATR requirements",
+  "key_characteristics": ["ATR compliant", "Non-QM standards", "Alternative documentation"],
+  "regulatory_framework": "CFPB ATR Rule",
+  "risk_profile": "Medium to High"
+}
+```
+
+#### ✅ **IMPLEMENTED: Product Management**
+```http
+POST /api/v3/products
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "product_name": "Titanium Advantage",
+  "category_id": "cat_nqm_001",
+  "description": "Premium non-QM product with enhanced features for high-net-worth borrowers",
+  "product_type": "core",
+  "key_features": ["Foreign national support", "Bank statement income", "Asset depletion"],
+  "underwriting_highlights": ["Alternative income documentation", "Flexible DTI ratios"],
+  "target_borrowers": ["Self-employed", "Foreign nationals", "High-net-worth individuals"]
+}
+```
+
+#### ✅ **IMPLEMENTED: Program Management**
+```http
+POST /api/v3/programs
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "program_name": "Titanium Core",
+  "program_code": "CORE",
+  "product_id": "prod_titanium_advantage_001",
+  "description": "Standard program with competitive rates and comprehensive features",
+  "program_type": "standard",
+  "loan_limits": {"max_amount": 3000000, "min_amount": 150000},
+  "rate_adjustments": ["+0.125% for foreign nationals", "+0.250% for cash-out refinance"],
+  "qualification_criteria": ["Minimum 680 FICO", "Maximum 43% DTI", "12 months reserves"]
+}
+```
 
 ### Package Management
 
-#### Create Document Package
+#### Create Document Package (4-Tier Hierarchy)
 ```http
 POST /api/v3/packages
 Content-Type: application/json
@@ -46,12 +102,42 @@ Authorization: Bearer <token>
 
 {
   "package_name": "NQM Titanium Advantage",
-  "category": "NQM",
+  "category": {
+    "category_code": "NQM",
+    "display_name": "Non-Qualified Mortgage",
+    "description": "Mortgage products that do not meet QM standards but follow ATR requirements"
+  },
+  "products": [
+    {
+      "product_name": "Titanium Advantage",
+      "description": "Premium non-QM product with enhanced features for high-net-worth borrowers",
+      "product_type": "core",
+      "key_features": ["Foreign national support", "Bank statement income", "Asset depletion"],
+      "programs": [
+        {
+          "program_name": "Titanium Core",
+          "program_code": "CORE",
+          "description": "Standard program with competitive rates",
+          "loan_limits": {"max_amount": 3000000, "min_amount": 150000},
+          "rate_adjustments": ["+0.125% for foreign nationals"]
+        },
+        {
+          "program_name": "Titanium Plus",
+          "program_code": "PLUS",
+          "description": "Enhanced program with additional features",
+          "loan_limits": {"max_amount": 5000000, "min_amount": 250000},
+          "rate_adjustments": ["+0.250% for enhanced features"]
+        }
+      ]
+    }
+  ],
   "template": "NQM_STANDARD",
   "tenant_id": "the_g1_group",
   "documents": [
     {
       "document_type": "guidelines",
+      "associated_to": "product",
+      "parent_id": "titanium_advantage",
       "expected_sections": [
         "Borrower Eligibility",
         "Income Documentation",
@@ -60,7 +146,17 @@ Authorization: Bearer <token>
       "processing_config": {
         "chunking_strategy": "hierarchical",
         "entity_extraction": true,
-        "decision_tree_extraction": true
+        "decision_tree_extraction": true,
+        "program_context": true
+      }
+    },
+    {
+      "document_type": "matrix",
+      "associated_to": "program",
+      "parent_id": "titanium_core",
+      "matrix_configuration": {
+        "dimensions": ["fico_score", "ltv_ratio", "dti_ratio"],
+        "program_specific": true
       }
     }
   ],
@@ -81,10 +177,52 @@ Authorization: Bearer <token>
     "version": "1.0.0",
     "status": "DRAFT",
     "created_at": "2024-01-15T10:30:00Z",
-    "documents": [...],
+    "hierarchy": {
+      "category": {
+        "category_id": "cat_nqm_001",
+        "category_code": "NQM",
+        "display_name": "Non-Qualified Mortgage",
+        "created_nodes": ["MortgageCategory:cat_nqm_001"]
+      },
+      "products": [
+        {
+          "product_id": "prod_titanium_advantage_001",
+          "product_name": "Titanium Advantage",
+          "programs": [
+            {
+              "program_id": "prog_titanium_core_001",
+              "program_name": "Titanium Core",
+              "created_nodes": ["Program:prog_titanium_core_001"]
+            },
+            {
+              "program_id": "prog_titanium_plus_001",
+              "program_name": "Titanium Plus",
+              "created_nodes": ["Program:prog_titanium_plus_001"]
+            }
+          ],
+          "created_nodes": ["Product:prod_titanium_advantage_001"]
+        }
+      ]
+    },
+    "documents": [
+      {
+        "document_id": "doc_guidelines_001",
+        "document_type": "guidelines",
+        "associated_to": "product",
+        "parent_id": "prod_titanium_advantage_001"
+      },
+      {
+        "document_id": "doc_matrix_001",
+        "document_type": "matrix",
+        "associated_to": "program",
+        "parent_id": "prog_titanium_core_001"
+      }
+    ],
     "validation_results": {
       "is_valid": true,
-      "issues": []
+      "issues": [],
+      "graph_nodes_created": 5,
+      "relationships_created": 4
     }
   }
 }
@@ -136,7 +274,7 @@ Authorization: Bearer <token>
 }
 ```
 
-#### Apply Package to Documents
+#### Apply Package to Documents (4-Tier Context)
 ```http
 POST /api/v3/packages/{package_id}/apply
 Content-Type: multipart/form-data
@@ -144,13 +282,23 @@ Authorization: Bearer <token>
 
 files: [file1.pdf, file2.pdf]
 document_mappings: {
-  "file1.pdf": "guidelines",
-  "file2.pdf": "matrix"
+  "file1.pdf": {
+    "document_type": "guidelines",
+    "associated_to": "product",
+    "parent_id": "prod_titanium_advantage_001"
+  },
+  "file2.pdf": {
+    "document_type": "matrix",
+    "associated_to": "program",
+    "parent_id": "prog_titanium_core_001"
+  }
 }
 options: {
   "update_in_place": true,
   "validate_structure": true,
-  "auto_map_sections": true
+  "auto_map_sections": true,
+  "use_program_context": true,
+  "enhance_with_hierarchy": true
 }
 ```
 

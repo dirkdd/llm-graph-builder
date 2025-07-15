@@ -9,11 +9,36 @@ export const uploadAPI = async (
   model: string,
   chunkNumber: number,
   totalChunks: number,
-  originalname: string
+  originalname: string,
+  packageContext?: {
+    categoryId?: string;
+    categoryName?: string;
+    productId?: string;
+    productName?: string;
+    documentType?: string;
+    expectedDocumentId?: string;
+    preSelectedDocumentType?: string;
+  }
 ): Promise<any> => {
   const urlUpload = `${url()}/upload`;
   const method: Method = 'post';
-  const additionalParams: UploadParams = { file, model, chunkNumber, totalChunks, originalname };
+  const additionalParams: UploadParams = { 
+    file, 
+    model, 
+    chunkNumber, 
+    totalChunks, 
+    originalname,
+    // Add package context if provided
+    ...(packageContext && {
+      categoryId: packageContext.categoryId,
+      categoryName: packageContext.categoryName,
+      productId: packageContext.productId,
+      productName: packageContext.productName,
+      documentType: packageContext.documentType,
+      expectedDocumentId: packageContext.expectedDocumentId,
+      preSelectedDocumentType: packageContext.preSelectedDocumentType
+    })
+  };
   const response = await apiCall(urlUpload, method, additionalParams);
   return response;
 };

@@ -26,14 +26,14 @@ import {
   Analytics as AnalyticsIcon,
   AccountTree as AccountTreeIcon
 } from '@mui/icons-material';
-import { CustomFile, DocumentPackage } from '../../types';
+import { CustomFile, DocumentPackage, ChatPackageContext } from '../../types';
 import { NavigationViewer } from '../Navigation/NavigationViewer';
 
 export interface PackageResultsViewerProps {
   packageId: string;
   processingResult: PackageProcessingResult;
   navigationData?: NavigationData[];
-  onStartChat?: (packageContext: PackageContext) => void;
+  onStartChat?: (packageContext: ChatPackageContext) => void;
   onViewGraph?: (packageId: string) => void;
   className?: string;
 }
@@ -104,15 +104,7 @@ export interface NavigationData {
   content?: string;
 }
 
-export interface PackageContext {
-  packageId: string;
-  packageName: string;
-  documentTypes: string[];
-  totalNodes: number;
-  totalRelationships: number;
-  categories: string[];
-  products: string[];
-}
+// Remove duplicate interface - using ChatPackageContext from types.ts
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -146,7 +138,7 @@ export const PackageResultsViewer: React.FC<PackageResultsViewerProps> = ({
   const [expandedAccordion, setExpandedAccordion] = useState<string | false>('overview');
 
   // Create package context for chat integration
-  const packageContext: PackageContext = useMemo(() => ({
+  const packageContext: ChatPackageContext = useMemo(() => ({
     packageId: processingResult.packageId,
     packageName: processingResult.packageName,
     documentTypes: processingResult.documentTypes.map(dt => dt.type),

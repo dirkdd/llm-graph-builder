@@ -1,284 +1,279 @@
 {
-  "project": {
-    "name": "Neo4j LLM Graph Builder - Original Frontend",
-    "description": "Clean baseline Neo4j knowledge graph builder interface with document processing and web source integration",
-    "version": "1.0.0",
-    "platform": "React Web Application",
-    "baseline_state": "Virgin frontend before package management enhancements"
-  },
-  "technical_foundation": {
-    "core_stack": {
-      "react": "18.3.1",
-      "typescript": "5.8.3",
-      "build_tool": "Vite 4.5.3",
-      "package_manager": "Yarn",
-      "routing": "react-router-dom 6.23.1"
+  "originalFrontendAnalysis": {
+    "metadata": {
+      "analysis_date": "2025-01-14",
+      "source_location": "/specs/front-end-archive",
+      "purpose": "Baseline understanding for UX/UI redesign",
+      "architecture_version": "v1.0.0"
     },
-    "ui_framework_ecosystem": {
-      "primary_design_system": "@neo4j-ndl/react 3.2.18",
-      "design_tokens": "@neo4j-ndl/base 3.2.9",
-      "graph_visualization": "@neo4j-nvl/react 0.3.8",
-      "supplementary_ui": "@mui/material 5.15.10",
-      "material_icons": "@mui/icons-material 5.15.10"
+    
+    "packageJsonDependencies": {
+      "coreFramework": {
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "react-router": "^6.23.1",
+        "react-router-dom": "^6.23.1"
+      },
+      "uiFrameworkAndDesignSystem": {
+        "primary": "@neo4j-ndl/react ^3.2.18",
+        "base": "@neo4j-ndl/base ^3.2.9", 
+        "visualization": "@neo4j-nvl/react ^0.3.8",
+        "visualization_base": "@neo4j-nvl/base ^0.3.6",
+        "materialUI": "@mui/material ^5.15.10",
+        "emotion": "@emotion/styled ^11.14.0",
+        "wordColor": "@neo4j-devtools/word-color ^0.0.8"
+      },
+      "dataManagement": {
+        "tables": "@tanstack/react-table ^8.20.5",
+        "http": "axios ^1.8.4",
+        "utilities": "clsx ^2.1.1",
+        "uuid": "uuid ^11.1.0"
+      },
+      "contentProcessing": {
+        "markdown": "react-markdown ^10.1.0",
+        "rehypeRaw": "rehype-raw ^7.0.0",
+        "remarkGfm": "remark-gfm ^4.0.1"
+      },
+      "authentication": {
+        "auth0": "@auth0/auth0-react ^2.2.4",
+        "googleOAuth": "@react-oauth/google ^0.12.1"
+      },
+      "interactions": {
+        "icons": "react-icons ^5.5.0",
+        "resizable": "re-resizable ^6.11.2",
+        "dropzone": "react-dropzone ^14.3.8"
+      }
     },
-    "styling_architecture": {
-      "primary_approach": "Tailwind CSS 4.1.5 with Neo4j NDL preset",
-      "css_in_js": "@emotion/styled 11.14.0",
-      "custom_styling": "CSS files for specific features (info.css)",
-      "theme_management": "CSS custom properties via NDL theme provider"
+    
+    "buildSystemAndTooling": {
+      "bundler": "vite ^4.5.3",
+      "viteplugin": "@vitejs/plugin-react ^4.5.0",
+      "typescript": "^5.7.3",
+      "styling": {
+        "tailwind": "tailwindcss ^4.1.5",
+        "postcss": "postcss ^8.5.3",
+        "tailwindPostcss": "@tailwindcss/postcss ^4.0.12"
+      },
+      "codeQuality": {
+        "eslint": "^8.45.0",
+        "prettier": "^3.5.3",
+        "husky": "^9.1.7",
+        "lintStaged": "^15.5.0"
+      }
     },
-    "state_management_philosophy": {
-      "core_approach": "React Context + Custom Hooks (no external libraries)",
-      "real_time_updates": "Server-sent events (SSE) for live data",
-      "data_fetching": "Axios 1.8.4 with custom API service layer",
-      "form_management": "Controlled components with context state"
+    
+    "architecturalPatterns": {
+      "componentArchitecture": {
+        "pattern": "Feature-based organization",
+        "structure": "Nested component hierarchy with clear separation of concerns",
+        "naming": "PascalCase for components, descriptive and functional names",
+        "organization": [
+          "Layout components (Header, SideNav, PageLayout)",
+          "Feature components (ChatBot, DataSources, Graph)",
+          "UI components (reusable primitives)",
+          "Popup/Modal components (specialized overlays)",
+          "Business logic components (Auth, FileTable)"
+        ]
+      },
+      
+      "stateManagement": {
+        "pattern": "React Context + Custom Hooks",
+        "contextProviders": [
+          "UserCredentialsWrapper - authentication and database connection",
+          "FileContextProvider - file upload and processing state", 
+          "MessageContextWrapper - chat message history",
+          "AlertContextWrapper - global alerts and notifications",
+          "ThemeWrapper - theme and dark mode management"
+        ],
+        "customHooks": [
+          "useSse - Server-sent events for real-time updates",
+          "useSpeech - Text-to-speech functionality", 
+          "useHasSelections - Selection state management",
+          "useSourceInput - Input handling for data sources"
+        ],
+        "philosophy": "Centralized state with context, local state with hooks"
+      },
+      
+      "routingPattern": {
+        "library": "react-router-dom v6",
+        "structure": "Simple route structure with authentication guards",
+        "routes": [
+          "/ - Main application (with optional auth guard)",
+          "/readonly - Read-only access mode", 
+          "/chat-only - Chat interface only"
+        ],
+        "authIntegration": "Conditional AuthenticationGuard wrapper based on SKIP_AUTH"
+      }
     },
-    "development_tooling": {
-      "linting": "ESLint 8.57.0 with TypeScript support",
-      "formatting": "Prettier 3.2.5",
-      "git_hooks": "Husky 9.1.7 for pre-commit quality gates",
-      "bundling": "Vite with optimized build configuration"
-    }
-  },
-  "application_architecture": {
-    "entry_points": {
-      "main_app": "App.tsx with routing and authentication",
-      "home_interface": "Home.tsx as primary user interface",
-      "chat_only": "ChatOnlyComponent.tsx for standalone chat"
+    
+    "stylingApproach": {
+      "primaryMethod": "Neo4j Design Language (NDL) + Tailwind CSS",
+      "designSystem": {
+        "ndlBase": "Core design tokens and CSS variables",
+        "ndlReact": "React components following Neo4j design principles",
+        "theme": "Light/dark mode with CSS custom properties",
+        "colorSystem": "CSS custom properties (--theme-palette-*)"
+      },
+      "tailwindIntegration": {
+        "preset": "@neo4j-ndl/base tailwind config",
+        "preflight": "disabled to work with NDL",
+        "customization": "Minimal - relies heavily on NDL presets"
+      },
+      "customCSS": {
+        "approach": "Component-specific CSS files",
+        "files": ["App.css", "index.css", "styling/info.css"],
+        "usage": "Custom styles for specific components and layout"
+      },
+      "responsiveness": {
+        "method": "CSS Grid + Container Queries",
+        "breakpoints": "CSS container queries for adaptive layouts",
+        "gridSystem": "CSS Grid for main layout structure"
+      }
     },
-    "routing_structure": {
-      "authentication_guard": "Optional Auth0 with bypass capability",
-      "main_routes": ["/", "/readonly", "/chat-only"],
-      "layout_pattern": "Single-page application with dynamic content",
-      "navigation_approach": "Context-aware content switching"
-    },
-    "component_hierarchy": {
-      "layout_components": [
-        "PageLayout.tsx - Main application shell",
-        "Header.tsx - Top navigation and branding",
-        "SideNav.tsx - Collapsible sidebar navigation",
-        "DrawerChatbot.tsx - Chat interface drawer",
-        "DrawerDropzone.tsx - File upload drawer"
+    
+    "uiFrameworkPhilosophy": {
+      "primaryFramework": "Neo4j Design Language (NDL)",
+      "designPrinciples": [
+        "Consistency with Neo4j brand and experience",
+        "Accessibility-first components",
+        "Theme-aware design system",
+        "Graph visualization integration"
       ],
-      "feature_domains": [
-        "DataSources/ - File upload and source management",
-        "ChatBot/ - Conversation interface and modes",
-        "Graph/ - Graph visualization and properties",
-        "WebSources/ - Web-based data source inputs",
-        "Popups/ - Modal dialogs and confirmations"
+      "componentLibrary": {
+        "ndlReact": "Primary UI components (buttons, modals, forms)",
+        "nvlReact": "Graph visualization components",
+        "materialUI": "Supplementary components for complex interactions",
+        "customComponents": "Business-specific UI built on NDL foundation"
+      },
+      "themeSystem": {
+        "implementation": "NeedleThemeProvider with CSS custom properties",
+        "modes": "light/dark with system preference detection",
+        "persistence": "localStorage with automatic body class injection"
+      }
+    },
+    
+    "featureOrganization": {
+      "structure": "Domain-driven component organization",
+      "domains": {
+        "authentication": "Auth/ - Auth0 and Google OAuth integration",
+        "dataIngestion": "DataSources/ - Local files, S3, GCS, web sources",
+        "chatInterface": "ChatBot/ - Conversational AI with multiple modes",
+        "graphVisualization": "Graph/ - Knowledge graph display and interaction",
+        "fileManagement": "FileTable.tsx - Document processing status",
+        "layout": "Layout/ - App shell and navigation",
+        "popups": "Popups/ - Modal dialogs and overlays",
+        "webSources": "WebSources/ - External data source integrations"
+      },
+      "sharedUtilities": {
+        "services": "API communication layer",
+        "utils": "Constants, utilities, and helper functions",
+        "context": "Global state management",
+        "hooks": "Reusable logic patterns"
+      }
+    },
+    
+    "typeSystemApproach": {
+      "typescript": "Comprehensive TypeScript implementation",
+      "typeOrganization": {
+        "centralTypes": "types.ts - All major interface definitions",
+        "approach": "Comprehensive type definitions for all data structures",
+        "patterns": "Generic types for reusability, extending base types"
+      },
+      "keyTypePatterns": [
+        "CustomFile - File processing with status tracking",
+        "UserCredentials - Database connection information", 
+        "Messages - Chat conversation structure",
+        "ExtendedNode/ExtendedRelationship - Graph data structures",
+        "OptionType - Dropdown and selection standardization"
       ],
-      "shared_utilities": [
-        "UI/ - Reusable component primitives",
-        "HOC/ - Higher-order components for common patterns"
+      "typePhilosophy": "Strict typing with comprehensive interfaces for all data flows"
+    },
+    
+    "designPatterns": {
+      "higherOrderComponents": {
+        "WithVisibility": "Conditional rendering wrapper",
+        "CustomModal": "Standardized modal behavior"
+      },
+      "compositionPatterns": [
+        "Provider composition in QuickStarter.tsx",
+        "Conditional rendering based on feature flags",
+        "Lazy loading for performance optimization",
+        "Error boundaries for fault tolerance"
+      ],
+      "apiPatterns": {
+        "structure": "FormData-based API communication",
+        "errorHandling": "Try-catch with user-friendly error messages",
+        "realTime": "Server-sent events for status updates",
+        "abstraction": "Service layer with consistent API interface"
+      }
+    },
+    
+    "navigationAndLayoutPattern": {
+      "mainLayout": "Grid-based layout with collapsible sidebars",
+      "layoutStructure": {
+        "header": "Top navigation with connection status and user info",
+        "leftSidebar": "File upload and data source management",
+        "mainContent": "Primary workspace area",
+        "rightSidebar": "Chat interface and interactions",
+        "responsive": "Collapsible sidebars with grid template adjustments"
+      },
+      "navigationPhilosophy": "Context-aware interface adapting to user workflow",
+      "stateAwareness": "UI adapts based on connection status and user permissions"
+    },
+    
+    "performancePatterns": {
+      "codesplitting": "React.lazy() for modal components",
+      "memoization": "Strategic use of useMemo and useCallback",
+      "virtualScrolling": "For large data sets in tables and lists",
+      "optimisticUpdates": "Real-time UI updates via SSE",
+      "bundleOptimization": "Vite for fast builds and hot reloading"
+    },
+    
+    "configurationManagement": {
+      "environment": "Vite environment variables with VITE_ prefix",
+      "featureFlags": "Environment-based feature toggling",
+      "constants": "Centralized configuration in utils/Constants.ts",
+      "flexibility": "Runtime configuration for models, sources, and features"
+    },
+    
+    "strengths": [
+      "Consistent design system integration with Neo4j NDL",
+      "Comprehensive TypeScript implementation",
+      "Well-organized feature-based architecture", 
+      "Real-time updates with server-sent events",
+      "Flexible authentication system",
+      "Robust state management with React Context",
+      "Performance optimizations with code splitting",
+      "Responsive grid-based layout system",
+      "Comprehensive error handling and user feedback",
+      "Integration with graph visualization libraries"
+    ],
+    
+    "architecturalPhilosophy": {
+      "coreValues": [
+        "User experience consistency through design system",
+        "Type safety and developer experience", 
+        "Real-time feedback and status awareness",
+        "Modular and maintainable component architecture",
+        "Performance and accessibility",
+        "Flexible configuration and feature toggling"
+      ],
+      "designPrinciples": [
+        "Progressive disclosure of complexity",
+        "Context-aware interface adaptation",
+        "Consistent interaction patterns",
+        "Clear visual hierarchy and feedback",
+        "Accessible and inclusive design"
       ]
     },
-    "state_management_structure": {
-      "context_providers": {
-        "ThemeWrapper": "Light/dark mode with CSS custom properties",
-        "UserCredentials": "Authentication and database connection state",
-        "UsersFiles": "File management and processing status",
-        "UserMessages": "Chat conversation history and context",
-        "Alert": "Global notification and feedback system"
-      },
-      "custom_hooks": {
-        "useSse": "Server-sent events for real-time updates",
-        "useSpeech": "Voice interaction capabilities",
-        "useSourceInput": "Generic source input handling",
-        "useHasSelections": "Selection state management"
-      }
+    
+    "technicalDecisions": {
+      "whyNeoNDL": "Maintains consistency with Neo4j ecosystem and brand",
+      "whyReactContext": "Centralized state management without external dependencies",
+      "whyTailwind": "Utility-first styling that complements NDL design system",
+      "whyVite": "Fast development experience and optimized builds",
+      "whyTypeScript": "Type safety for complex data structures and API interactions",
+      "whySSE": "Real-time updates for long-running file processing operations"
     }
-  },
-  "design_system_integration": {
-    "neo4j_design_language": {
-      "component_library": "@neo4j-ndl/react for consistent UI components",
-      "design_tokens": "Comprehensive token system via @neo4j-ndl/base",
-      "theme_provider": "NeedleThemeProvider for dynamic theming",
-      "brand_consistency": "Full Neo4j visual identity integration"
-    },
-    "color_system": {
-      "dynamic_theming": "CSS custom properties for light/dark modes",
-      "semantic_colors": "Theme-aware color tokens (bg-weak, text-strong, etc.)",
-      "status_indicators": "Consistent color coding for file processing states",
-      "accessibility": "WCAG compliant contrast ratios across themes"
-    },
-    "typography_system": {
-      "font_stack": "Neo4j Sans with system font fallbacks",
-      "scale_system": "NDL typography scale (body-small to heading-large)",
-      "component_usage": "Typography component for consistent text rendering",
-      "hierarchy": "Clear visual hierarchy with semantic heading levels"
-    },
-    "component_patterns": {
-      "buttons": "NDL Button with variant system (primary, secondary, tertiary)",
-      "inputs": "NDL TextField, Select, and form components",
-      "data_display": "NDL DataGrid, Card, and List components",
-      "navigation": "NDL navigation components with accessibility built-in",
-      "feedback": "NDL Banner, Alert, and ProgressBar for user feedback"
-    }
-  },
-  "feature_architecture": {
-    "file_processing_workflow": {
-      "upload_interface": "Drag-and-drop zones with multiple source types",
-      "processing_pipeline": "Real-time status tracking via SSE",
-      "source_types": ["Local files", "AWS S3", "Google Cloud Storage", "Web URLs", "YouTube", "Wikipedia"],
-      "status_management": "Color-coded status indicators with progress tracking"
-    },
-    "chat_interface_design": {
-      "drawer_pattern": "Collapsible side drawer for chat interactions",
-      "mode_switching": "Multiple chat modes (vector, graph, hybrid)",
-      "message_types": "Support for text and structured responses",
-      "voice_integration": "Speech-to-text and text-to-speech capabilities",
-      "context_awareness": "File and graph context in conversations"
-    },
-    "graph_visualization": {
-      "neo4j_integration": "Deep integration with Neo4j visualization library",
-      "property_panels": "Interactive graph node and relationship inspection",
-      "schema_visualization": "Dynamic schema rendering and exploration",
-      "legend_system": "Color-coded legends for graph elements"
-    },
-    "database_connection": {
-      "connection_modal": "Secure database credential management",
-      "status_indicators": "Real-time connection status with visual feedback",
-      "vector_index_management": "Automatic vector index creation and validation",
-      "health_monitoring": "Database health checks and error reporting"
-    }
-  },
-  "interaction_design_patterns": {
-    "progressive_disclosure": {
-      "sidebar_navigation": "Collapsible sections reveal functionality as needed",
-      "modal_workflows": "Step-by-step processes in focused modal dialogs",
-      "expandable_content": "Graph properties and file details expand on demand",
-      "context_menus": "Right-click actions for advanced operations"
-    },
-    "real_time_feedback": {
-      "processing_status": "Live updates during file processing operations",
-      "connection_indicators": "Real-time database connection status",
-      "upload_progress": "Progress bars and status indicators for file uploads",
-      "error_handling": "Immediate feedback with actionable error messages"
-    },
-    "responsive_interactions": {
-      "touch_optimized": "Touch-friendly interactions for mobile devices",
-      "keyboard_navigation": "Full keyboard accessibility for all features",
-      "gesture_support": "Drag-and-drop with visual feedback",
-      "hover_states": "Rich hover interactions for desktop users"
-    }
-  },
-  "performance_optimization_strategy": {
-    "code_splitting": {
-      "route_splitting": "Route-based code splitting with React.lazy",
-      "component_splitting": "Heavy components (modals, graph) loaded on demand",
-      "vendor_splitting": "Separate chunks for third-party libraries"
-    },
-    "rendering_optimization": {
-      "context_optimization": "Granular contexts to minimize re-renders",
-      "memoization": "React.memo and useMemo for expensive computations",
-      "virtual_scrolling": "Efficient rendering for large datasets"
-    },
-    "asset_optimization": {
-      "image_optimization": "Optimized images with appropriate formats",
-      "font_loading": "Efficient web font loading strategies",
-      "bundle_analysis": "Vite analyzer for bundle size optimization"
-    }
-  },
-  "accessibility_foundation": {
-    "wcag_compliance": "WCAG 2.1 AA compliance through NDL components",
-    "semantic_html": "Proper HTML semantics and landmark usage",
-    "aria_implementation": "Comprehensive ARIA labeling for screen readers",
-    "keyboard_support": "Full keyboard navigation for all functionality",
-    "focus_management": "Logical tab order and visible focus indicators",
-    "color_independence": "Information conveyed beyond color alone"
-  },
-  "type_safety_architecture": {
-    "comprehensive_typing": "Full TypeScript coverage with strict configuration",
-    "interface_definitions": [
-      "CustomFileBase - Core file processing type structure",
-      "UserCredentials - Authentication and connection state",
-      "MessageType - Chat message structure and metadata",
-      "AlertType - Global notification system types",
-      "GraphData - Graph visualization data structures"
-    ],
-    "api_typing": "Strongly typed API responses and service calls",
-    "component_props": "Comprehensive prop typing for all components",
-    "utility_types": "Generic types for common patterns and transformations"
-  },
-  "configuration_management": {
-    "environment_variables": [
-      "VITE_BACKEND_API_URL - Backend service endpoint",
-      "VITE_LLM_MODELS - Available language models",
-      "VITE_REACT_APP_SOURCES - Enabled data source types",
-      "VITE_SKIP_AUTH - Development authentication bypass",
-      "VITE_AUTH0_DOMAIN - Auth0 authentication domain",
-      "VITE_AUTH0_CLIENT_ID - Auth0 client configuration"
-    ],
-    "build_configuration": {
-      "vite_config": "Optimized Vite configuration for development and production",
-      "tailwind_config": "Tailwind with NDL preset and custom utilities",
-      "typescript_config": "Strict TypeScript with path mapping",
-      "postcss_config": "PostCSS for Tailwind and custom CSS processing"
-    }
-  },
-  "component_design_philosophy": {
-    "composition_over_inheritance": "Prefer component composition for flexibility",
-    "single_responsibility": "Components focused on specific functionality",
-    "prop_drilling_avoidance": "Context and custom hooks for state sharing",
-    "reusability_focus": "Shared components in UI/ directory for consistency",
-    "error_boundary_pattern": "Graceful error handling at component boundaries"
-  },
-  "user_experience_principles": {
-    "workflow_optimization": {
-      "one_click_actions": "Minimize steps for common operations",
-      "context_preservation": "Maintain user context across interactions",
-      "undo_capabilities": "Reversible actions where appropriate",
-      "batch_operations": "Efficient bulk operations for file management"
-    },
-    "information_architecture": {
-      "clear_hierarchy": "Logical information organization and navigation",
-      "contextual_help": "Inline help and guidance where needed",
-      "status_transparency": "Clear indication of system and process states",
-      "error_recovery": "Clear paths for error resolution and retry"
-    },
-    "visual_design": {
-      "consistency": "Consistent visual language throughout the application",
-      "brand_alignment": "Strong Neo4j brand integration and recognition",
-      "information_density": "Balanced information density for different user types",
-      "visual_hierarchy": "Clear visual emphasis on important information"
-    }
-  },
-  "technical_debt_considerations": {
-    "minimal_dependencies": "Focused dependency list with clear justification",
-    "version_consistency": "Consistent version ranges for related packages",
-    "build_reliability": "Stable build process with reproducible results",
-    "update_strategy": "Clear strategy for dependency updates and migrations"
-  },
-  "integration_architecture": {
-    "backend_communication": {
-      "rest_api": "RESTful API communication with standardized responses",
-      "real_time_updates": "Server-sent events for live status updates",
-      "file_upload": "Chunked file upload with progress tracking",
-      "error_handling": "Standardized error response handling"
-    },
-    "external_services": {
-      "authentication": "Auth0 integration with optional bypass",
-      "cloud_storage": "AWS S3 and Google Cloud Storage integration",
-      "graph_database": "Neo4j integration via backend API",
-      "llm_services": "Multiple language model provider support"
-    }
-  },
-  "deployment_characteristics": {
-    "static_hosting": "Static site generation suitable for CDN deployment",
-    "environment_flexibility": "Runtime environment configuration",
-    "build_optimization": "Optimized builds with tree shaking and minification",
-    "caching_strategy": "Appropriate caching headers for static assets"
-  },
-  "scalability_foundations": {
-    "component_modularity": "Modular architecture supports feature additions",
-    "state_management": "Scalable state management without external dependencies",
-    "performance_baseline": "Strong performance foundation for growth",
-    "code_organization": "Clear code organization patterns for team development"
-  },
-  "maintenance_considerations": {
-    "code_clarity": "Clear, self-documenting code patterns",
-    "testing_foundation": "Testing infrastructure ready for test development",
-    "documentation": "Inline documentation and clear component interfaces",
-    "refactoring_safety": "TypeScript provides refactoring safety net"
   }
 }

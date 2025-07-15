@@ -42,6 +42,11 @@ class graphDBdataAccess:
         try:
             job_status = "New"
             logging.info(f"creating source node if does not exist in database {self.graph._database}")
+            
+            # Add diagnostic logging for problematic files
+            if obj_source_node.file_name and 'titanium' in obj_source_node.file_name.lower():
+                logging.warning(f"🔍 DIAGNOSTIC: Creating Document node for problematic file {obj_source_node.file_name}")
+                logging.warning(f"🔍 File properties: size={obj_source_node.file_size}, type={obj_source_node.file_type}")
             self.graph.query("""MERGE(d:Document {fileName :$fn}) SET d.fileSize = $fs, d.fileType = $ft ,
                             d.status = $st, d.url = $url, d.awsAccessKeyId = $awsacc_key_id, 
                             d.fileSource = $f_source, d.createdAt = $c_at, d.updatedAt = $u_at, 
@@ -626,7 +631,7 @@ class graphDBdataAccess:
                 "validation_rules": json.dumps(package_data.get("validation_rules", {}))
             }
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return len(result) > 0
             
         except Exception as e:
@@ -655,7 +660,7 @@ class graphDBdataAccess:
             """
             
             params = {"package_id": package_id}
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             
             if result:
                 package_data = result[0]
@@ -700,7 +705,7 @@ class graphDBdataAccess:
             RETURN p.package_id as package_id
             """
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return len(result) > 0
             
         except Exception as e:
@@ -712,18 +717,20 @@ class graphDBdataAccess:
         try:
             logging.info(f"Deleting package node: {package_id}")
             
-            # Delete package and all related nodes/relationships
+            # Delete package and all related nodes/relationships (including product tier)
             query = """
             MATCH (p:DocumentPackage {package_id: $package_id})
-            OPTIONAL MATCH (p)-[:CONTAINS]->(d:PackageDocument)
+            OPTIONAL MATCH (p)-[:CONTAINS]->(prod:PackageProduct)
+            OPTIONAL MATCH (prod)-[:CONTAINS]->(d:PackageDocument)
+            OPTIONAL MATCH (p)-[:CONTAINS]->(d2:PackageDocument)
             OPTIONAL MATCH (p)-[:VERSION_OF]->(v:PackageVersion)
             OPTIONAL MATCH (v)-[:SNAPSHOT]->(s:PackageSnapshot)
-            DETACH DELETE p, d, v, s
+            DETACH DELETE p, prod, d, d2, v, s
             RETURN count(p) as deleted_count
             """
             
             params = {"package_id": package_id}
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             
             return result[0]["deleted_count"] > 0 if result else False
             
@@ -768,22 +775,64 @@ class graphDBdataAccess:
             ORDER BY p.updated_at DESC
             """
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return result if result else []
             
         except Exception as e:
             logging.error(f"Error listing packages: {str(e)}")
             raise Exception(f"Failed to list packages: {str(e)}")
 
-    # Package Document Methods
+    # Package Product Methods
     
-    def create_package_document(self, package_id: str, document_data: dict) -> bool:
-        """Create a PackageDocument node and link to package"""
+    def create_package_product(self, package_id: str, product_data: dict) -> bool:
+        """Create a PackageProduct node and link to package"""
         try:
-            logging.info(f"Creating package document: {document_data.get('document_id', 'unknown')}")
+            logging.info(f"Creating package product: {product_data.get('product_id', 'unknown')}")
             
             query = """
             MATCH (p:DocumentPackage {package_id: $package_id})
+            CREATE (prod:PackageProduct {
+                product_id: $product_id,
+                product_name: $product_name,
+                product_type: $product_type,
+                tier_level: $tier_level,
+                processing_priority: $processing_priority,
+                dependencies: $dependencies,
+                created_at: $created_at,
+                updated_at: $updated_at,
+                metadata: $metadata
+            })
+            CREATE (p)-[:CONTAINS]->(prod)
+            RETURN prod.product_id as product_id
+            """
+            
+            params = {
+                "package_id": package_id,
+                "product_id": product_data.get("product_id"),
+                "product_name": product_data.get("product_name"),
+                "product_type": product_data.get("product_type"),
+                "tier_level": product_data.get("tier_level", 1),
+                "processing_priority": product_data.get("processing_priority", 1),
+                "dependencies": json.dumps(product_data.get("dependencies", [])),
+                "created_at": product_data.get("created_at").isoformat() if product_data.get("created_at") else None,
+                "updated_at": product_data.get("updated_at").isoformat() if product_data.get("updated_at") else None,
+                "metadata": json.dumps(product_data.get("metadata", {}))
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating package product: {str(e)}")
+            raise Exception(f"Failed to create package product: {str(e)}")
+    
+    def create_product_document(self, package_id: str, product_id: str, document_data: dict) -> bool:
+        """Create a PackageDocument node and link to a specific product"""
+        try:
+            logging.info(f"Creating product document: {document_data.get('document_id', 'unknown')} for product: {product_id}")
+            
+            query = """
+            MATCH (p:DocumentPackage {package_id: $package_id})-[:CONTAINS]->(prod:PackageProduct {product_id: $product_id})
             CREATE (d:PackageDocument {
                 document_id: $document_id,
                 document_type: $document_type,
@@ -797,12 +846,13 @@ class graphDBdataAccess:
                 validation_schema: $validation_schema,
                 quality_thresholds: $quality_thresholds
             })
-            CREATE (p)-[:CONTAINS]->(d)
+            CREATE (prod)-[:CONTAINS]->(d)
             RETURN d.document_id as document_id
             """
             
             params = {
                 "package_id": package_id,
+                "product_id": product_id,
                 "document_id": document_data.get("document_id"),
                 "document_type": document_data.get("document_type"),
                 "document_name": document_data.get("document_name"),
@@ -816,7 +866,972 @@ class graphDBdataAccess:
                 "quality_thresholds": json.dumps(document_data.get("quality_thresholds", {}))
             }
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating product document: {str(e)}")
+            raise Exception(f"Failed to create product document: {str(e)}")
+
+    def get_package_products(self, package_id: str) -> list:
+        """Get all products for a package"""
+        try:
+            logging.info(f"Retrieving package products: {package_id}")
+            
+            query = """
+            MATCH (p:DocumentPackage {package_id: $package_id})-[:CONTAINS]->(prod:PackageProduct)
+            RETURN prod.product_id as product_id,
+                   prod.product_name as product_name,
+                   prod.product_type as product_type,
+                   prod.tier_level as tier_level,
+                   prod.processing_priority as processing_priority,
+                   prod.dependencies as dependencies,
+                   prod.created_at as created_at,
+                   prod.updated_at as updated_at,
+                   prod.metadata as metadata
+            ORDER BY prod.processing_priority, prod.product_name
+            """
+            
+            params = {"package_id": package_id}
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            
+            # Parse JSON fields
+            products = []
+            for prod in result:
+                processed_prod = {
+                    'product_id': prod.get('product_id'),
+                    'product_name': prod.get('product_name'),
+                    'product_type': prod.get('product_type'),
+                    'tier_level': prod.get('tier_level', 1),
+                    'processing_priority': prod.get('processing_priority', 1),
+                    'dependencies': json.loads(prod.get("dependencies", "[]")),
+                    'created_at': prod.get('created_at'),
+                    'updated_at': prod.get('updated_at'),
+                    'metadata': json.loads(prod.get("metadata", "{}"))
+                }
+                products.append(processed_prod)
+            
+            return products
+            
+        except Exception as e:
+            logging.error(f"Error retrieving package products: {str(e)}")
+            raise Exception(f"Failed to retrieve package products: {str(e)}")
+
+    # DocumentPackage, Category and Product Node Methods
+    
+    def create_document_package_node(self, package_metadata: dict) -> bool:
+        """Create a DocumentPackage root node for package management"""
+        try:
+            logging.info(f"Creating DocumentPackage node: {package_metadata.get('package_name', 'Unknown')}")
+            
+            query = """
+            CREATE (dp:DocumentPackage {
+                package_id: $package_id,
+                package_name: $package_name,
+                description: $description,
+                created_at: datetime(),
+                updated_at: datetime(),
+                status: 'ACTIVE',
+                workspace_id: $workspace_id,
+                tenant_id: $tenant_id,
+                metadata: $metadata
+            })
+            RETURN dp.package_id as package_id
+            """
+            
+            params = {
+                "package_id": package_metadata.get("package_id"),
+                "package_name": package_metadata.get("package_name"),
+                "description": package_metadata.get("description", ""),
+                "workspace_id": package_metadata.get("workspace_id", "default_workspace"),
+                "tenant_id": package_metadata.get("tenant_id", "default_tenant"),
+                "metadata": json.dumps(package_metadata.get("metadata", {}))
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating DocumentPackage node: {str(e)}")
+            return False
+    
+    def link_category_to_package(self, package_id: str, category_code: str) -> bool:
+        """Create CONTAINS_CATEGORY relationship between DocumentPackage and MortgageCategory"""
+        try:
+            logging.info(f"Linking category {category_code} to package {package_id}")
+            
+            # First check if both nodes exist
+            check_query = """
+            MATCH (dp:DocumentPackage {package_id: $package_id})
+            MATCH (mc:MortgageCategory {category_code: $category_code})
+            RETURN dp.package_id as package_found, mc.category_code as category_found
+            """
+            
+            check_result = self.graph.query(check_query, {
+                "package_id": package_id,
+                "category_code": category_code
+            }, session_params={"database": self.graph._database})
+            
+            if len(check_result) == 0:
+                logging.error(f"Either DocumentPackage {package_id} or MortgageCategory {category_code} not found")
+                return False
+            
+            logging.info(f"Found both nodes: DocumentPackage {package_id} and MortgageCategory {category_code}")
+            
+            # Create the relationship
+            query = """
+            MATCH (dp:DocumentPackage {package_id: $package_id})
+            MATCH (mc:MortgageCategory {category_code: $category_code})
+            MERGE (dp)-[:CONTAINS_CATEGORY]->(mc)
+            RETURN COUNT(*) as linked
+            """
+            
+            params = {
+                "package_id": package_id,
+                "category_code": category_code
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            success = len(result) > 0 and result[0].get('linked', 0) > 0
+            
+            if success:
+                logging.info(f"Successfully created CONTAINS_CATEGORY relationship: {package_id} -> {category_code}")
+            else:
+                logging.error(f"Failed to create CONTAINS_CATEGORY relationship: {package_id} -> {category_code}")
+            
+            return success
+            
+        except Exception as e:
+            logging.error(f"Error linking category to package: {str(e)}")
+            return False
+    
+    def create_category_node(self, category_metadata: dict) -> bool:
+        """Create a MortgageCategory node with rich metadata"""
+        try:
+            logging.info(f"Creating category node: {category_metadata.get('display_name', 'Unknown')}")
+            
+            query = """
+            MERGE (c:MortgageCategory {category_code: $category_code})
+            SET c.display_name = $display_name,
+                c.description = $description,
+                c.key_characteristics = $key_characteristics,
+                c.regulatory_framework = $regulatory_framework,
+                c.typical_products = $typical_products,
+                c.risk_profile = $risk_profile,
+                c.created_at = datetime(),
+                c.updated_at = datetime()
+            RETURN c.category_code as category_code
+            """
+            
+            params = {
+                "category_code": category_metadata.get("category_code"),
+                "display_name": category_metadata.get("display_name"),
+                "description": category_metadata.get("description"),
+                "key_characteristics": category_metadata.get("key_characteristics", []),
+                "regulatory_framework": category_metadata.get("regulatory_framework", ""),
+                "typical_products": category_metadata.get("typical_products", []),
+                "risk_profile": category_metadata.get("risk_profile", "")
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating category node: {str(e)}")
+            return False
+    
+    def create_product_node(self, product_data: dict, category_code: str) -> bool:
+        """Create a Product node with rich metadata and link to category"""
+        try:
+            logging.info(f"Creating product node: {product_data.get('product_name', 'Unknown')}")
+            
+            query = """
+            MATCH (c:MortgageCategory {category_code: $category_code})
+            MERGE (p:Product {product_id: $product_id})
+            SET p.product_name = $product_name,
+                p.product_type = $product_type,
+                p.description = $description,
+                p.key_features = $key_features,
+                p.underwriting_highlights = $underwriting_highlights,
+                p.target_borrowers = $target_borrowers,
+                p.tier_level = $tier_level,
+                p.processing_priority = $processing_priority,
+                p.created_at = datetime(),
+                p.updated_at = datetime()
+            MERGE (c)-[:CONTAINS]->(p)
+            RETURN p.product_id as product_id
+            """
+            
+            params = {
+                "category_code": category_code,
+                "product_id": product_data.get("product_id"),
+                "product_name": product_data.get("product_name"),
+                "product_type": product_data.get("product_type"),
+                "description": product_data.get("description", ""),
+                "key_features": product_data.get("key_features", []),
+                "underwriting_highlights": product_data.get("underwriting_highlights", []),
+                "target_borrowers": product_data.get("target_borrowers", []),
+                "tier_level": product_data.get("tier_level", 1),
+                "processing_priority": product_data.get("processing_priority", 1)
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating product node: {str(e)}")
+            return False
+    
+    def link_document_to_product(self, document_filename: str, product_id: str) -> bool:
+        """Link an existing Document node to a Product node"""
+        try:
+            logging.info(f"Linking document {document_filename} to product {product_id}")
+            
+            query = """
+            MATCH (d:Document {fileName: $document_filename})
+            MATCH (p:Product {product_id: $product_id})
+            MERGE (p)-[:CONTAINS]->(d)
+            RETURN d.fileName as document_name, p.product_id as product_id
+            """
+            
+            params = {
+                "document_filename": document_filename,
+                "product_id": product_id
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error linking document to product: {str(e)}")
+            return False
+    
+    def get_category_metadata(self, category_code: str) -> dict:
+        """Retrieve category metadata for LLM processing"""
+        try:
+            query = """
+            MATCH (c:MortgageCategory {category_code: $category_code})
+            RETURN c.display_name as display_name,
+                   c.description as description,
+                   c.key_characteristics as key_characteristics,
+                   c.regulatory_framework as regulatory_framework,
+                   c.typical_products as typical_products,
+                   c.risk_profile as risk_profile
+            """
+            
+            result = self.execute_query(query, {"category_code": category_code})
+            if result:
+                return result[0]
+            return {}
+            
+        except Exception as e:
+            logging.error(f"Error retrieving category metadata: {str(e)}")
+            return {}
+    
+    def get_product_metadata(self, product_id: str) -> dict:
+        """Retrieve product metadata for LLM processing"""
+        try:
+            query = """
+            MATCH (p:Product {product_id: $product_id})
+            OPTIONAL MATCH (c:MortgageCategory)-[:CONTAINS]->(p)
+            RETURN p.product_name as product_name,
+                   p.description as description,
+                   p.key_features as key_features,
+                   p.underwriting_highlights as underwriting_highlights,
+                   p.target_borrowers as target_borrowers,
+                   p.product_type as product_type,
+                   c.category_code as category_code,
+                   c.display_name as category_display_name
+            """
+            
+            result = self.execute_query(query, {"product_id": product_id})
+            if result:
+                return result[0]
+            return {}
+            
+        except Exception as e:
+            logging.error(f"Error retrieving product metadata: {str(e)}")
+            return {}
+    
+    def add_package_metadata_to_document(self, file_name: str, package_metadata: dict) -> bool:
+        """Add package context metadata to an existing Document node and create relationships"""
+        try:
+            # First, update the document metadata
+            query = """
+            MATCH (d:Document {fileName: $file_name})
+            SET d.categoryId = $category_id,
+                d.categoryName = $category_name,
+                d.productId = $product_id,
+                d.productName = $product_name,
+                d.documentType = $document_type,
+                d.expected_document_id = $expected_document_id,
+                d.package_upload = true,
+                d.created_via_package = true,
+                d.updated_at = datetime()
+            RETURN d.fileName as fileName
+            """
+            
+            result = self.graph.query(query, {
+                'file_name': file_name,
+                'category_id': package_metadata.get('category_id'),
+                'category_name': package_metadata.get('category_name'),
+                'product_id': package_metadata.get('product_id'),
+                'product_name': package_metadata.get('product_name'),
+                'document_type': package_metadata.get('document_type'),
+                'expected_document_id': package_metadata.get('expectedDocumentId')
+            }, session_params={"database": self.graph._database})
+            
+            if len(result) == 0:
+                logging.warning(f"Document {file_name} not found for metadata update")
+                return False
+            
+            # Create relationships if category_id and product_id are provided
+            if package_metadata.get('category_id') and package_metadata.get('product_id'):
+                # Create relationship from Product to Document
+                relationship_query = """
+                MATCH (d:Document {fileName: $file_name})
+                MATCH (p:Product {product_id: $product_id})
+                MERGE (p)-[:CONTAINS_DOCUMENT]->(d)
+                
+                // Also create relationship from Category to Document for direct access
+                WITH d, p
+                MATCH (c:MortgageCategory)
+                WHERE c.category_code = $category_code OR c.id = $category_id
+                MERGE (c)-[:ASSOCIATED_DOCUMENT]->(d)
+                
+                RETURN d.fileName as fileName, p.product_id as product_id, c.category_code as category_code
+                """
+                
+                # Extract category_code from category_id if it follows the pattern cat_CODE_timestamp
+                category_id = package_metadata.get('category_id')
+                category_code = category_id
+                if category_id and category_id.startswith('cat_'):
+                    parts = category_id.split('_')
+                    if len(parts) >= 2:
+                        category_code = parts[1]  # Extract 'NQM' from 'cat_NQM_1752608865'
+                
+                rel_result = self.graph.query(relationship_query, {
+                    'file_name': file_name,
+                    'product_id': package_metadata.get('product_id'),
+                    'category_id': category_id,
+                    'category_code': category_code
+                }, session_params={"database": self.graph._database})
+                
+                if len(rel_result) > 0:
+                    logging.info(f"Created relationships for document {file_name} to product {package_metadata.get('product_id')} and category {package_metadata.get('category_id')}")
+                else:
+                    logging.warning(f"Failed to create relationships for document {file_name}")
+                
+                # Note: Content nodes (Guidelines/Matrix) will be created during processing,
+                # not during document type assignment. This maintains the two-structure separation.
+                
+                # Link Document to corresponding PackageDocument
+                package_doc_result = self._link_document_to_package_document(
+                    file_name, 
+                    package_metadata.get('document_type'), 
+                    package_metadata.get('product_id')
+                )
+                
+                if package_doc_result:
+                    logging.info(f"Linked Document {file_name} to PackageDocument")
+                else:
+                    logging.warning(f"Failed to link Document {file_name} to PackageDocument")
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error adding package metadata to document {file_name}: {str(e)}")
+            return False
+
+    def get_document_package_info(self, file_name: str) -> dict:
+        """Retrieve package metadata for a document to determine if enhanced processing should be used"""
+        try:
+            query = """
+            MATCH (d:Document {fileName: $file_name})
+            RETURN d.created_via_package as created_via_package,
+                   d.package_upload as package_upload,
+                   d.category_id as category_id,
+                   d.category_name as category_name,
+                   d.product_id as product_id,
+                   d.product_name as product_name,
+                   d.document_type as document_type
+            """
+            
+            result = self.graph.query(query, {'file_name': file_name}, session_params={"database": self.graph._database})
+            
+            if result:
+                record = result[0] if result else None
+                
+                if record:
+                    return {
+                        'created_via_package': record.get('created_via_package', False),
+                        'package_upload': record.get('package_upload', False),
+                        'category_id': record.get('category_id'),
+                        'category_name': record.get('category_name'),
+                        'product_id': record.get('product_id'),
+                        'product_name': record.get('product_name'),
+                        'document_type': record.get('document_type')
+                    }
+            
+            return {}
+                    
+        except Exception as e:
+            logging.error(f"Error retrieving package info for document {file_name}: {str(e)}")
+            return {}
+
+    def get_expected_documents_for_product(self, product_id: str) -> list:
+        """
+        Get all expected documents for a product with their upload status.
+        Returns list of PackageDocument nodes with associated uploaded Document nodes.
+        """
+        try:
+            query = """
+            MATCH (prod:Product {product_id: $product_id})-[:EXPECTS_DOCUMENT]->(pd:PackageDocument)
+            
+            // Get uploaded document if it exists
+            OPTIONAL MATCH (pd)-[:HAS_UPLOADED]->(d:Document)
+            
+            RETURN pd.document_id as document_id,
+                   pd.document_type as document_type,
+                   pd.document_name as document_name,
+                   pd.expected_structure as expected_structure,
+                   pd.validation_rules as validation_rules,
+                   pd.required_sections as required_sections,
+                   pd.optional_sections as optional_sections,
+                   pd.has_upload as has_upload,
+                   pd.processing_status as processing_status,
+                   
+                   // Document details if uploaded
+                   d.fileName as uploaded_filename,
+                   d.fileSize as uploaded_file_size,
+                   d.createdAt as upload_date,
+                   d.status as document_processing_status
+                   
+            ORDER BY pd.document_type, pd.document_name
+            """
+            
+            result = self.graph.query(query, {'product_id': product_id}, session_params={"database": self.graph._database})
+            
+            expected_documents = []
+            for record in result:
+                doc_data = {
+                    'id': record.get('document_id'),
+                    'document_type': record.get('document_type'),
+                    'document_name': record.get('document_name'),
+                    'is_required': True,  # For now, all PackageDocuments are required
+                    'upload_status': 'uploaded' if record.get('has_upload') else 'empty',
+                    'uploaded_file': None,
+                    'validation_rules': self._get_validation_rules_for_document_type(record.get('document_type')),
+                    'expected_structure': json.loads(record.get('expected_structure') or '{}'),
+                    'required_sections': record.get('required_sections', []),
+                    'optional_sections': record.get('optional_sections', []),
+                    'processing_status': record.get('processing_status', 'PENDING')
+                }
+                
+                # Add uploaded file details if available
+                if record.get('uploaded_filename'):
+                    doc_data['uploaded_file'] = {
+                        'fileName': record.get('uploaded_filename'),
+                        'fileSize': record.get('uploaded_file_size'),
+                        'uploadDate': record.get('upload_date'),
+                        'processingStatus': record.get('document_processing_status', 'New')
+                    }
+                    
+                    # Update upload status based on processing status
+                    if record.get('document_processing_status') == 'Processing':
+                        doc_data['upload_status'] = 'processing'
+                    elif record.get('document_processing_status') in ['Completed', 'Failed']:
+                        doc_data['upload_status'] = 'uploaded'
+                
+                expected_documents.append(doc_data)
+            
+            return expected_documents
+            
+        except Exception as e:
+            logging.error(f"Error getting expected documents for product {product_id}: {str(e)}")
+            return []
+
+    def _get_validation_rules_for_document_type(self, document_type: str) -> dict:
+        """Get validation rules based on document type"""
+        
+        validation_rules = {
+            'Guidelines': {
+                'accepted_types': ['.pdf', '.docx'],
+                'accepted_mime_types': ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+                'max_file_size': 50 * 1024 * 1024,  # 50MB
+                'content_validation': 'guidelines_structure',
+                'description': 'Underwriting guidelines and policy documents'
+            },
+            'Matrix': {
+                'accepted_types': ['.pdf', '.xlsx', '.xls', '.csv'],
+                'accepted_mime_types': ['application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'],
+                'max_file_size': 25 * 1024 * 1024,  # 25MB
+                'content_validation': 'matrix_structure',
+                'description': 'Rate matrices and pricing tables'
+            },
+            'Supporting': {
+                'accepted_types': ['.pdf', '.docx', '.xlsx', '.xls'],
+                'accepted_mime_types': ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+                'max_file_size': 30 * 1024 * 1024,  # 30MB
+                'content_validation': 'supporting_document',
+                'description': 'Supporting documentation and supplements'
+            },
+            'Other': {
+                'accepted_types': ['.pdf', '.docx', '.xlsx', '.xls', '.txt', '.csv'],
+                'accepted_mime_types': ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/plain', 'text/csv'],
+                'max_file_size': 100 * 1024 * 1024,  # 100MB
+                'content_validation': 'none',
+                'description': 'Other documents and miscellaneous files'
+            }
+        }
+        
+        return validation_rules.get(document_type, validation_rules['Other'])
+
+    def get_product_info(self, product_id: str) -> dict:
+        """Get basic product information"""
+        try:
+            query = """
+            MATCH (p:Product {product_id: $product_id})
+            RETURN p.product_name as product_name,
+                   p.description as description,
+                   p.category_code as category_code
+            """
+            
+            result = self.graph.query(query, {'product_id': product_id}, session_params={"database": self.graph._database})
+            
+            if result:
+                record = result[0] if result else None
+                
+                if record:
+                    return {
+                        'product_name': record.get('product_name'),
+                        'description': record.get('description'),
+                        'category_code': record.get('category_code')
+                    }
+            
+            return {}
+                    
+        except Exception as e:
+            logging.error(f"Error getting product info for {product_id}: {str(e)}")
+            return {}
+
+    def _link_document_to_package_document(self, file_name: str, document_type: str, product_id: str) -> bool:
+        """Link an uploaded Document to its corresponding PackageDocument"""
+        try:
+            # First, remove any existing PackageDocument -> Document relationships for this document
+            # This prevents duplicate relationships when document type is changed
+            cleanup_query = """
+            MATCH (d:Document {fileName: $file_name})
+            MATCH (pd:PackageDocument)-[r:HAS_UPLOADED]->(d)
+            DELETE r
+            SET pd.has_upload = false,
+                pd.uploaded_file = null,
+                pd.upload_date = null,
+                pd.processing_status = 'PENDING'
+            RETURN COUNT(r) as removed_relationships
+            """
+            
+            cleanup_result = self.graph.query(cleanup_query, {
+                'file_name': file_name
+            }, session_params={"database": self.graph._database})
+            
+            removed_count = cleanup_result[0].get('removed_relationships', 0) if cleanup_result else 0
+            if removed_count > 0:
+                logging.info(f"Removed {removed_count} existing PackageDocument relationships for {file_name}")
+            
+            # Now find the PackageDocument with matching document_type and product_id
+            # and create HAS_UPLOADED relationship (PackageDocument -> Document)
+            query = """
+            MATCH (d:Document {fileName: $file_name})
+            MATCH (prod:Product {product_id: $product_id})-[:EXPECTS_DOCUMENT]->(pd:PackageDocument {document_type: $document_type})
+            
+            // Create relationship from PackageDocument to Document (PackageDocument HAS_UPLOADED Document)
+            MERGE (pd)-[:HAS_UPLOADED]->(d)
+            
+            // Update PackageDocument status
+            SET pd.has_upload = true,
+                pd.uploaded_file = $file_name,
+                pd.upload_date = datetime(),
+                pd.processing_status = 'UPLOADED'
+            
+            RETURN pd.document_id as package_document_id, d.fileName as document_name
+            """
+            
+            params = {
+                'file_name': file_name,
+                'document_type': document_type,
+                'product_id': product_id
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            
+            if len(result) > 0:
+                logging.info(f"Successfully linked Document {file_name} to PackageDocument {result[0].get('package_document_id')}")
+                return True
+            else:
+                # Add debugging query to see what PackageDocuments exist for this product
+                debug_query = """
+                MATCH (prod:Product {product_id: $product_id})-[:EXPECTS_DOCUMENT]->(pd:PackageDocument)
+                RETURN pd.document_type as existing_types, pd.document_name as existing_names, pd.document_id as existing_ids
+                """
+                debug_result = self.graph.query(debug_query, {'product_id': product_id}, session_params={"database": self.graph._database})
+                logging.warning(f"No matching PackageDocument found for {file_name} with type '{document_type}' and product {product_id}")
+                logging.warning(f"Available PackageDocuments for product {product_id}: {debug_result}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error linking Document to PackageDocument: {str(e)}")
+            return False
+
+    def create_knowledge_structure_nodes(self, file_name: str, package_metadata: dict) -> bool:
+        """Create knowledge extraction versions of DocumentPackage, MortgageCategory and Product nodes"""
+        try:
+            category_id = package_metadata.get('category_id')
+            product_id = package_metadata.get('product_id')
+            
+            if not category_id or not product_id:
+                logging.warning(f"Missing category_id or product_id for knowledge structure creation")
+                return False
+            
+            # First, find the original DocumentPackage and create knowledge version
+            package_query = """
+            // Find the package management DocumentPackage that contains this category
+            MATCH (pkg_dp:DocumentPackage)-[:CONTAINS_CATEGORY]->(pkg_cat:MortgageCategory {category_code: $category_id})
+            
+            // Create or update knowledge structure DocumentPackage
+            MERGE (know_dp:DocumentPackage {package_id: pkg_dp.package_id, knowledge_extracted: true})
+            SET know_dp.package_name = pkg_dp.package_name,
+                know_dp.description = pkg_dp.description,
+                know_dp.workspace_id = pkg_dp.workspace_id,
+                know_dp.tenant_id = pkg_dp.tenant_id,
+                know_dp.knowledge_extracted = true,
+                know_dp.last_processed = datetime()
+            
+            RETURN know_dp.package_id as package_id
+            """
+            
+            pkg_result = self.graph.query(package_query, {
+                'category_id': category_id
+            }, session_params={"database": self.graph._database})
+            
+            if len(pkg_result) == 0:
+                logging.warning(f"Could not find DocumentPackage for category {category_id}")
+                return False
+            
+            package_id = pkg_result[0].get('package_id')
+            
+            # Create knowledge structure MortgageCategory and link to knowledge DocumentPackage
+            category_query = """
+            // Find the package management category and knowledge DocumentPackage
+            MATCH (pkg_cat:MortgageCategory {category_code: $category_id})
+            MATCH (know_dp:DocumentPackage {package_id: $package_id, knowledge_extracted: true})
+            
+            // Create or update knowledge structure category
+            MERGE (know_cat:MortgageCategory {category_code: $category_id, knowledge_extracted: true})
+            SET know_cat.display_name = pkg_cat.display_name,
+                know_cat.description = pkg_cat.description,
+                know_cat.key_characteristics = pkg_cat.key_characteristics,
+                know_cat.regulatory_framework = pkg_cat.regulatory_framework,
+                know_cat.typical_products = pkg_cat.typical_products,
+                know_cat.risk_profile = pkg_cat.risk_profile,
+                know_cat.knowledge_extracted = true,
+                know_cat.last_processed = datetime()
+            
+            // Create relationship in knowledge structure
+            MERGE (know_dp)-[:CONTAINS_CATEGORY]->(know_cat)
+            
+            RETURN know_cat.category_code as category_code
+            """
+            
+            cat_result = self.graph.query(category_query, {
+                'category_id': category_id,
+                'package_id': package_id
+            }, session_params={"database": self.graph._database})
+            
+            # Create knowledge structure Product if it doesn't exist  
+            product_query = """
+            // Find the package management product
+            MATCH (pkg_prod:Product {product_id: $product_id})
+            
+            // Find or create knowledge structure category
+            MATCH (know_cat:MortgageCategory {category_code: $category_id, knowledge_extracted: true})
+            
+            // Create or update knowledge structure product
+            MERGE (know_prod:Product {product_id: $product_id, knowledge_extracted: true})
+            SET know_prod.product_name = pkg_prod.product_name,
+                know_prod.product_type = pkg_prod.product_type,
+                know_prod.description = pkg_prod.description,
+                know_prod.loan_characteristics = pkg_prod.loan_characteristics,
+                know_prod.eligible_borrowers = pkg_prod.eligible_borrowers,
+                know_prod.underwriting_approach = pkg_prod.underwriting_approach,
+                know_prod.knowledge_extracted = true,
+                know_prod.last_processed = datetime()
+            
+            // Create relationship in knowledge structure
+            MERGE (know_cat)-[:CONTAINS]->(know_prod)
+            
+            RETURN know_prod.product_id as product_id
+            """
+            
+            prod_result = self.graph.query(product_query, {
+                'product_id': product_id,
+                'category_id': category_id
+            }, session_params={"database": self.graph._database})
+            
+            # Link the Document to the knowledge structure
+            doc_link_query = """
+            MATCH (d:Document {fileName: $file_name})
+            MATCH (know_prod:Product {product_id: $product_id, knowledge_extracted: true})
+            
+            // Create relationship from knowledge structure to document
+            MERGE (know_prod)-[:EXTRACTED_FROM_DOCUMENT]->(d)
+            
+            RETURN d.fileName as document_name
+            """
+            
+            doc_result = self.graph.query(doc_link_query, {
+                'file_name': file_name,
+                'product_id': product_id
+            }, session_params={"database": self.graph._database})
+            
+            if len(pkg_result) > 0 and len(cat_result) > 0 and len(prod_result) > 0 and len(doc_result) > 0:
+                logging.info(f"Successfully created complete knowledge structure for {file_name}")
+                logging.info(f"Knowledge structure: DocumentPackage -> MortgageCategory -> Product -> Document")
+                return True
+            else:
+                logging.warning(f"Failed to create complete knowledge structure for {file_name}")
+                logging.warning(f"Results: pkg={len(pkg_result)}, cat={len(cat_result)}, prod={len(prod_result)}, doc={len(doc_result)}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error creating knowledge structure nodes: {str(e)}")
+            return False
+
+    def create_program_node(self, program_data: dict, product_id: str) -> bool:
+        """Create a Program node with rich metadata and link to product"""
+        try:
+            logging.info(f"Creating program node: {program_data.get('program_name', 'Unknown')}")
+            
+            query = """
+            MATCH (p:Product {product_id: $product_id})
+            MERGE (prog:Program {program_id: $program_id})
+            SET prog.program_name = $program_name,
+                prog.program_code = $program_code,
+                prog.description = $description,
+                prog.program_type = $program_type,
+                prog.loan_limits = $loan_limits,
+                prog.rate_adjustments = $rate_adjustments,
+                prog.feature_differences = $feature_differences,
+                prog.qualification_criteria = $qualification_criteria,
+                prog.processing_priority = $processing_priority,
+                prog.created_at = datetime(),
+                prog.updated_at = datetime()
+            MERGE (p)-[:CONTAINS]->(prog)
+            RETURN prog.program_id as program_id
+            """
+            
+            # Convert complex fields to JSON strings
+            params = {
+                "product_id": product_id,
+                "program_id": program_data.get("program_id"),
+                "program_name": program_data.get("program_name"),
+                "program_code": program_data.get("program_code"),
+                "description": program_data.get("description", ""),
+                "program_type": program_data.get("program_type", "standard"),
+                "loan_limits": json.dumps(program_data.get("loan_limits", {})),
+                "rate_adjustments": program_data.get("rate_adjustments", []),
+                "feature_differences": program_data.get("feature_differences", []),
+                "qualification_criteria": program_data.get("qualification_criteria", []),
+                "processing_priority": program_data.get("processing_priority", 1)
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating program node: {str(e)}")
+            return False
+    
+    def link_document_to_program(self, document_filename: str, program_id: str) -> bool:
+        """Link an existing Document node to a Program node"""
+        try:
+            logging.info(f"Linking document {document_filename} to program {program_id}")
+            
+            query = """
+            MATCH (d:Document {fileName: $document_filename})
+            MATCH (prog:Program {program_id: $program_id})
+            MERGE (prog)-[:CONTAINS]->(d)
+            RETURN d.fileName as document_name, prog.program_id as program_id
+            """
+            
+            params = {
+                "document_filename": document_filename,
+                "program_id": program_id
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error linking document to program: {str(e)}")
+            return False
+    
+    def get_program_metadata(self, program_id: str) -> dict:
+        """Retrieve program metadata for LLM processing"""
+        try:
+            query = """
+            MATCH (prog:Program {program_id: $program_id})
+            OPTIONAL MATCH (p:Product)-[:CONTAINS]->(prog)
+            OPTIONAL MATCH (c:MortgageCategory)-[:CONTAINS]->(p)
+            RETURN prog.program_name as program_name,
+                   prog.program_code as program_code,
+                   prog.description as description,
+                   prog.program_type as program_type,
+                   prog.loan_limits as loan_limits,
+                   prog.rate_adjustments as rate_adjustments,
+                   prog.feature_differences as feature_differences,
+                   prog.qualification_criteria as qualification_criteria,
+                   p.product_id as product_id,
+                   p.product_name as product_name,
+                   c.category_code as category_code,
+                   c.display_name as category_display_name
+            """
+            
+            result = self.graph.query(query, {"program_id": program_id}, session_params={"database": self.graph._database})
+            if result:
+                # Parse JSON fields back to objects
+                metadata = result[0]
+                if metadata.get('loan_limits'):
+                    try:
+                        metadata['loan_limits'] = json.loads(metadata['loan_limits'])
+                    except json.JSONDecodeError:
+                        metadata['loan_limits'] = {}
+                return metadata
+            return {}
+            
+        except Exception as e:
+            logging.error(f"Error retrieving program metadata: {str(e)}")
+            return {}
+    
+    # Package Document Methods
+    
+    def cleanup_duplicate_documents(self, package_id: str) -> bool:
+        """Clean up duplicate Document nodes for PackageDocument relationships"""
+        try:
+            logging.info(f"Cleaning up duplicate documents for package: {package_id}")
+            
+            # Find PackageDocument nodes that have corresponding Document nodes
+            # and merge duplicate information
+            query = """
+            MATCH (p:DocumentPackage {package_id: $package_id})
+            MATCH (p)-[:CONTAINS*1..2]->(pd:PackageDocument)
+            OPTIONAL MATCH (pd)-[:REPRESENTS]->(doc:Document {fileName: pd.document_name})
+            WHERE doc IS NULL
+            WITH pd
+            OPTIONAL MATCH (duplicate_doc:Document {fileName: pd.document_name})
+            WHERE duplicate_doc IS NOT NULL
+            CREATE (pd)-[:REPRESENTS]->(duplicate_doc)
+            RETURN count(pd) as linked_count
+            """
+            
+            result = self.execute_query(query, {"package_id": package_id})
+            linked_count = result[0]['linked_count'] if result else 0
+            
+            logging.info(f"Linked {linked_count} PackageDocument nodes to existing Document nodes")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error cleaning up duplicate documents: {str(e)}")
+            return False
+    
+    def create_package_document(self, package_id: str, document_data: dict, product_id: str = None) -> bool:
+        """Create a PackageDocument node and link to product or package, while linking to existing Document node"""
+        try:
+            logging.info(f"Creating package document: {document_data.get('document_id', 'unknown')}")
+            
+            if product_id:
+                # New 3-tier hierarchy: link to product and existing Document node
+                query = """
+                MATCH (p:DocumentPackage {package_id: $package_id})-[:CONTAINS]->(prod:PackageProduct {product_id: $product_id})
+                CREATE (d:PackageDocument {
+                    document_id: $document_id,
+                    document_type: $document_type,
+                    document_name: $document_name,
+                    expected_structure: $expected_structure,
+                    required_sections: $required_sections,
+                    optional_sections: $optional_sections,
+                    chunking_strategy: $chunking_strategy,
+                    entity_types: $entity_types,
+                    matrix_configuration: $matrix_configuration,
+                    validation_schema: $validation_schema,
+                    quality_thresholds: $quality_thresholds
+                })
+                CREATE (prod)-[:CONTAINS]->(d)
+                // Link to existing Document node if it exists
+                WITH d
+                OPTIONAL MATCH (doc:Document {fileName: $document_name})
+                FOREACH (existing_doc IN CASE WHEN doc IS NOT NULL THEN [doc] ELSE [] END |
+                    CREATE (d)-[:REPRESENTS]->(existing_doc)
+                )
+                RETURN d.document_id as document_id
+                """
+                params = {
+                    "package_id": package_id,
+                    "product_id": product_id,
+                    "document_id": document_data.get("document_id"),
+                    "document_type": document_data.get("document_type"),
+                    "document_name": document_data.get("document_name"),
+                    "expected_structure": json.dumps(document_data.get("expected_structure", {})),
+                    "required_sections": json.dumps(document_data.get("required_sections", [])),
+                    "optional_sections": json.dumps(document_data.get("optional_sections", [])),
+                    "chunking_strategy": document_data.get("chunking_strategy", "hierarchical"),
+                    "entity_types": json.dumps(document_data.get("entity_types", [])),
+                    "matrix_configuration": json.dumps(document_data.get("matrix_configuration")) if document_data.get("matrix_configuration") else None,
+                    "validation_schema": json.dumps(document_data.get("validation_schema", {})),
+                    "quality_thresholds": json.dumps(document_data.get("quality_thresholds", {}))
+                }
+            else:
+                # Backwards compatibility: link directly to package and existing Document node
+                query = """
+                MATCH (p:DocumentPackage {package_id: $package_id})
+                CREATE (d:PackageDocument {
+                    document_id: $document_id,
+                    document_type: $document_type,
+                    document_name: $document_name,
+                    expected_structure: $expected_structure,
+                    required_sections: $required_sections,
+                    optional_sections: $optional_sections,
+                    chunking_strategy: $chunking_strategy,
+                    entity_types: $entity_types,
+                    matrix_configuration: $matrix_configuration,
+                    validation_schema: $validation_schema,
+                    quality_thresholds: $quality_thresholds
+                })
+                CREATE (p)-[:CONTAINS]->(d)
+                // Link to existing Document node if it exists
+                WITH d
+                OPTIONAL MATCH (doc:Document {fileName: $document_name})
+                FOREACH (existing_doc IN CASE WHEN doc IS NOT NULL THEN [doc] ELSE [] END |
+                    CREATE (d)-[:REPRESENTS]->(existing_doc)
+                )
+                RETURN d.document_id as document_id
+                """
+                params = {
+                    "package_id": package_id,
+                    "document_id": document_data.get("document_id"),
+                    "document_type": document_data.get("document_type"),
+                    "document_name": document_data.get("document_name"),
+                    "expected_structure": json.dumps(document_data.get("expected_structure", {})),
+                    "required_sections": json.dumps(document_data.get("required_sections", [])),
+                    "optional_sections": json.dumps(document_data.get("optional_sections", [])),
+                    "chunking_strategy": document_data.get("chunking_strategy", "hierarchical"),
+                    "entity_types": json.dumps(document_data.get("entity_types", [])),
+                    "matrix_configuration": json.dumps(document_data.get("matrix_configuration")) if document_data.get("matrix_configuration") else None,
+                    "validation_schema": json.dumps(document_data.get("validation_schema", {})),
+                    "quality_thresholds": json.dumps(document_data.get("quality_thresholds", {}))
+                }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return len(result) > 0
             
         except Exception as e:
@@ -824,12 +1839,13 @@ class graphDBdataAccess:
             raise Exception(f"Failed to create package document: {str(e)}")
     
     def get_package_documents(self, package_id: str) -> list:
-        """Get all documents for a package"""
+        """Get all documents for a package with file information - supports 3-tier hierarchy"""
         try:
             logging.info(f"Retrieving package documents: {package_id}")
             
-            query = """
-            MATCH (p:DocumentPackage {package_id: $package_id})-[:CONTAINS]->(d:PackageDocument)
+            # Try 3-tier hierarchy first: Package -> Product -> Document
+            query_3tier = """
+            MATCH (p:DocumentPackage {package_id: $package_id})-[:CONTAINS]->(prod:PackageProduct)-[:CONTAINS]->(d:PackageDocument)
             RETURN d.document_id as document_id,
                    d.document_type as document_type,
                    d.document_name as document_name,
@@ -840,24 +1856,91 @@ class graphDBdataAccess:
                    d.entity_types as entity_types,
                    d.matrix_configuration as matrix_configuration,
                    d.validation_schema as validation_schema,
-                   d.quality_thresholds as quality_thresholds
+                   d.quality_thresholds as quality_thresholds,
+                   d.file_size as file_size,
+                   d.file_source as file_source,
+                   d.processing_type as processing_type,
+                   d.status as status,
+                   d.created_at as created_at,
+                   d.updated_at as updated_at,
+                   prod.product_id as product_id,
+                   prod.product_name as product_name,
+                   prod.product_type as product_type,
+                   prod.tier_level as tier_level,
+                   prod.processing_priority as processing_priority
+            ORDER BY prod.processing_priority, prod.product_name, d.document_type, d.document_name
+            """
+            
+            # Fallback to 2-tier hierarchy: Package -> Document (backwards compatibility)
+            query_2tier = """
+            MATCH (p:DocumentPackage {package_id: $package_id})-[:CONTAINS]->(d:PackageDocument)
+            WHERE NOT EXISTS((p)-[:CONTAINS]->(:PackageProduct)-[:CONTAINS]->(d))
+            RETURN d.document_id as document_id,
+                   d.document_type as document_type,
+                   d.document_name as document_name,
+                   d.expected_structure as expected_structure,
+                   d.required_sections as required_sections,
+                   d.optional_sections as optional_sections,
+                   d.chunking_strategy as chunking_strategy,
+                   d.entity_types as entity_types,
+                   d.matrix_configuration as matrix_configuration,
+                   d.validation_schema as validation_schema,
+                   d.quality_thresholds as quality_thresholds,
+                   d.file_size as file_size,
+                   d.file_source as file_source,
+                   d.processing_type as processing_type,
+                   d.status as status,
+                   d.created_at as created_at,
+                   d.updated_at as updated_at,
+                   null as product_id,
+                   null as product_name,
+                   null as product_type,
+                   null as tier_level,
+                   null as processing_priority
             ORDER BY d.document_type, d.document_name
             """
             
             params = {"package_id": package_id}
-            result = self.execute_query(query, params)
             
-            # Parse JSON fields
+            # Execute 3-tier query first
+            result_3tier = self.execute_query(query_3tier, params)
+            
+            # Execute 2-tier query for backwards compatibility
+            result_2tier = self.execute_query(query_2tier, params)
+            
+            # Combine results
+            result = result_3tier + result_2tier
+            
+            # Parse JSON fields and format for processing
             documents = []
             for doc in result:
-                doc["expected_structure"] = json.loads(doc.get("expected_structure", "{}"))
-                doc["required_sections"] = json.loads(doc.get("required_sections", "[]"))
-                doc["optional_sections"] = json.loads(doc.get("optional_sections", "[]"))
-                doc["entity_types"] = json.loads(doc.get("entity_types", "[]"))
-                doc["matrix_configuration"] = json.loads(doc.get("matrix_configuration")) if doc.get("matrix_configuration") else None
-                doc["validation_schema"] = json.loads(doc.get("validation_schema", "{}"))
-                doc["quality_thresholds"] = json.loads(doc.get("quality_thresholds", "{}"))
-                documents.append(doc)
+                processed_doc = {
+                    'id': doc.get('document_id'),
+                    'name': doc.get('document_name'),
+                    'document_type': doc.get('document_type', 'Other'),
+                    'package_id': package_id,
+                    'package_name': f'Package {package_id}',
+                    'processing_type': doc.get('processing_type', 'package'),
+                    'file_source': doc.get('file_source', 'local'),
+                    'size': doc.get('file_size', 0),
+                    'status': doc.get('status', 'pending'),
+                    'created_at': doc.get('created_at'),
+                    'updated_at': doc.get('updated_at'),
+                    'expected_structure': json.loads(doc.get("expected_structure", "{}")),
+                    'required_sections': json.loads(doc.get("required_sections", "[]")),
+                    'optional_sections': json.loads(doc.get("optional_sections", "[]")),
+                    'entity_types': json.loads(doc.get("entity_types", "[]")),
+                    'matrix_configuration': json.loads(doc.get("matrix_configuration")) if doc.get("matrix_configuration") else None,
+                    'validation_schema': json.loads(doc.get("validation_schema", "{}")),
+                    'quality_thresholds': json.loads(doc.get("quality_thresholds", "{}")),
+                    # Product-tier information
+                    'product_id': doc.get('product_id'),
+                    'product_name': doc.get('product_name'),
+                    'product_type': doc.get('product_type'),
+                    'tier_level': doc.get('tier_level'),
+                    'processing_priority': doc.get('processing_priority')
+                }
+                documents.append(processed_doc)
             
             return documents
             
@@ -890,7 +1973,7 @@ class graphDBdataAccess:
                 "metadata": json.dumps(relationship_data.get("metadata", {}))
             }
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return len(result) > 0
             
         except Exception as e:
@@ -913,7 +1996,7 @@ class graphDBdataAccess:
             """
             
             params = {"package_id": package_id}
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             
             # Parse JSON metadata
             relationships = []
@@ -958,7 +2041,7 @@ class graphDBdataAccess:
                 "metadata": json.dumps(version_data.get("metadata", {}))
             }
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return len(result) > 0
             
         except Exception as e:
@@ -982,7 +2065,7 @@ class graphDBdataAccess:
             """
             
             params = {"package_id": package_id}
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             
             # Parse JSON fields
             versions = []
@@ -1023,7 +2106,7 @@ class graphDBdataAccess:
                 "created_at": snapshot_data.get("snapshot_created")
             }
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return len(result) > 0
             
         except Exception as e:
@@ -1042,7 +2125,7 @@ class graphDBdataAccess:
             """
             
             params = {"package_id": package_id, "version": version}
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             
             if result:
                 snapshot = result[0]
@@ -1117,6 +2200,9 @@ class graphDBdataAccess:
                 "CREATE INDEX package_tenant_index IF NOT EXISTS FOR (p:DocumentPackage) ON (p.tenant_id)",
                 "CREATE INDEX package_category_index IF NOT EXISTS FOR (p:DocumentPackage) ON (p.category)",
                 "CREATE INDEX package_status_index IF NOT EXISTS FOR (p:DocumentPackage) ON (p.status)",
+                "CREATE INDEX product_id_index IF NOT EXISTS FOR (prod:PackageProduct) ON (prod.product_id)",
+                "CREATE INDEX product_type_index IF NOT EXISTS FOR (prod:PackageProduct) ON (prod.product_type)",
+                "CREATE INDEX product_priority_index IF NOT EXISTS FOR (prod:PackageProduct) ON (prod.processing_priority)",
                 "CREATE INDEX document_id_index IF NOT EXISTS FOR (d:PackageDocument) ON (d.document_id)",
                 "CREATE INDEX version_index IF NOT EXISTS FOR (v:PackageVersion) ON (v.version)"
             ]
@@ -1124,6 +2210,7 @@ class graphDBdataAccess:
             # Create constraints for data integrity
             constraint_queries = [
                 "CREATE CONSTRAINT package_id_unique IF NOT EXISTS FOR (p:DocumentPackage) REQUIRE p.package_id IS UNIQUE",
+                "CREATE CONSTRAINT product_id_unique IF NOT EXISTS FOR (prod:PackageProduct) REQUIRE prod.product_id IS UNIQUE",
                 "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (d:PackageDocument) REQUIRE d.document_id IS UNIQUE"
             ]
             
@@ -1186,7 +2273,7 @@ class graphDBdataAccess:
                 """
                 params = {}
             
-            result = self.execute_query(query, params)
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
             return result[0] if result else {}
             
         except Exception as e:
@@ -1200,19 +2287,31 @@ class graphDBdataAccess:
             
             cleanup_stats = {
                 "orphaned_documents": 0,
+                "orphaned_products": 0,
                 "orphaned_versions": 0,
                 "orphaned_snapshots": 0
             }
             
-            # Clean up orphaned documents
+            # Clean up orphaned documents (not connected to package or product)
             orphaned_docs_query = """
             MATCH (d:PackageDocument)
-            WHERE NOT EXISTS((p:DocumentPackage)-[:CONTAINS]->(d))
+            WHERE NOT EXISTS((p:DocumentPackage)-[:CONTAINS]->(d)) 
+            AND NOT EXISTS((prod:PackageProduct)-[:CONTAINS]->(d))
             DETACH DELETE d
             RETURN count(d) as count
             """
             result = self.execute_query(orphaned_docs_query)
             cleanup_stats["orphaned_documents"] = result[0]["count"] if result else 0
+            
+            # Clean up orphaned products
+            orphaned_products_query = """
+            MATCH (prod:PackageProduct)
+            WHERE NOT EXISTS((p:DocumentPackage)-[:CONTAINS]->(prod))
+            DETACH DELETE prod
+            RETURN count(prod) as count
+            """
+            result = self.execute_query(orphaned_products_query)
+            cleanup_stats["orphaned_products"] = result[0]["count"] if result else 0
             
             # Clean up orphaned versions
             orphaned_versions_query = """
@@ -1231,7 +2330,7 @@ class graphDBdataAccess:
             DETACH DELETE s
             RETURN count(s) as count
             """
-            result = self.execute_query(orphaned_snapshots_query)
+            result = self.graph.query(orphaned_snapshots_query, {}, session_params={"database": self.graph._database})
             cleanup_stats["orphaned_snapshots"] = result[0]["count"] if result else 0
             
             logging.info(f"Cleanup completed: {cleanup_stats}")
@@ -1240,3 +2339,405 @@ class graphDBdataAccess:
         except Exception as e:
             logging.error(f"Error cleaning up orphaned package data: {str(e)}")
             raise Exception(f"Failed to cleanup orphaned package data: {str(e)}")
+    
+    # Two-Structure Architecture Methods
+    
+    def create_package_document_node(self, package_document_data: dict, product_id: str) -> bool:
+        """Create a PackageDocument node representing an expected document in the package"""
+        try:
+            logging.info(f"Creating package document node: {package_document_data.get('document_name', 'Unknown')}")
+            
+            query = """
+            MATCH (p:Product {product_id: $product_id})
+            MERGE (pd:PackageDocument {document_id: $document_id})
+            SET pd.document_name = $document_name,
+                pd.document_type = $document_type,
+                pd.expected_structure = $expected_structure,
+                pd.validation_rules = $validation_rules,
+                pd.required_sections = $required_sections,
+                pd.optional_sections = $optional_sections,
+                pd.created_at = datetime(),
+                pd.updated_at = datetime(),
+                pd.has_upload = false,
+                pd.processing_status = 'PENDING'
+            MERGE (p)-[:EXPECTS_DOCUMENT]->(pd)
+            RETURN pd.document_id as document_id
+            """
+            
+            params = {
+                "product_id": product_id,
+                "document_id": package_document_data.get("document_id"),
+                "document_name": package_document_data.get("document_name"),
+                "document_type": package_document_data.get("document_type"),
+                "expected_structure": json.dumps(package_document_data.get("expected_structure", {})),
+                "validation_rules": json.dumps(package_document_data.get("validation_rules", {})),
+                "required_sections": package_document_data.get("required_sections", []),
+                "optional_sections": package_document_data.get("optional_sections", [])
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating package document node: {str(e)}")
+            return False
+    
+    def link_uploaded_document_to_package_document(self, document_filename: str, package_document_id: str) -> bool:
+        """Link an uploaded Document to its corresponding PackageDocument"""
+        try:
+            logging.info(f"🔗 Linking uploaded document {document_filename} to package document {package_document_id}")
+            
+            # First check if both nodes exist
+            check_query = """
+            OPTIONAL MATCH (pd:PackageDocument {document_id: $package_document_id})
+            OPTIONAL MATCH (d:Document {fileName: $document_filename})
+            RETURN pd.document_id as package_found, d.fileName as document_found
+            """
+            
+            check_result = self.graph.query(check_query, {
+                "package_document_id": package_document_id,
+                "document_filename": document_filename
+            }, session_params={"database": self.graph._database})
+            
+            if check_result:
+                check_record = check_result[0]
+                if not check_record.get('package_found'):
+                    logging.error(f"❌ PackageDocument {package_document_id} not found in database")
+                    return False
+                if not check_record.get('document_found'):
+                    logging.error(f"❌ Document {document_filename} not found in database")
+                    return False
+                logging.info(f"✅ Both nodes exist: PackageDocument {package_document_id} and Document {document_filename}")
+            
+            # Create the relationship
+            query = """
+            MATCH (pd:PackageDocument {document_id: $package_document_id})
+            MATCH (d:Document {fileName: $document_filename})
+            MERGE (pd)-[:HAS_UPLOADED]->(d)
+            SET pd.has_upload = true,
+                pd.uploaded_at = datetime(),
+                d.package_document_id = $package_document_id
+            RETURN pd.document_id as package_document_id
+            """
+            
+            params = {
+                "package_document_id": package_document_id,
+                "document_filename": document_filename
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            success = len(result) > 0
+            
+            if success:
+                logging.info(f"✅ Successfully created HAS_UPLOADED relationship")
+            else:
+                logging.error(f"❌ Failed to create HAS_UPLOADED relationship")
+                
+            return success
+            
+        except Exception as e:
+            logging.error(f"Error linking uploaded document to package document: {str(e)}")
+            return False
+    
+    def create_discovered_program_node(self, program_data: dict, product_id: str, discovered_from: str) -> bool:
+        """Create a Program node discovered during document processing"""
+        try:
+            logging.info(f"Creating discovered program node: {program_data.get('program_name', 'Unknown')}")
+            
+            query = """
+            MATCH (p:Product {product_id: $product_id})
+            MERGE (prog:Program {program_id: $program_id})
+            SET prog.program_name = $program_name,
+                prog.program_code = $program_code,
+                prog.description = $description,
+                prog.discovered_from = $discovered_from,
+                prog.discovered_at = datetime(),
+                prog.loan_limits = $loan_limits,
+                prog.rate_adjustments = $rate_adjustments,
+                prog.feature_differences = $feature_differences,
+                prog.qualification_criteria = $qualification_criteria,
+                prog.created_at = datetime(),
+                prog.updated_at = datetime()
+            MERGE (p)-[:HAS_PROGRAM]->(prog)
+            RETURN prog.program_id as program_id
+            """
+            
+            params = {
+                "product_id": product_id,
+                "program_id": program_data.get("program_id"),
+                "program_name": program_data.get("program_name"),
+                "program_code": program_data.get("program_code"),
+                "description": program_data.get("description", ""),
+                "discovered_from": discovered_from,
+                "loan_limits": json.dumps(program_data.get("loan_limits", {})),
+                "rate_adjustments": program_data.get("rate_adjustments", []),
+                "feature_differences": program_data.get("feature_differences", []),
+                "qualification_criteria": program_data.get("qualification_criteria", [])
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating discovered program node: {str(e)}")
+            return False
+    
+    def create_processed_guidelines_node(self, document_id: str, guidelines_data: dict) -> bool:
+        """Create a Guidelines node from processed document content"""
+        try:
+            logging.info(f"Creating processed guidelines node from document: {document_id}")
+            
+            query = """
+            MATCH (d:Document {fileName: $document_id})
+            MERGE (g:Guidelines {guidelines_id: $guidelines_id})
+            SET g.content = $content,
+                g.sections = $sections,
+                g.discovered_programs = $discovered_programs,
+                g.eligibility_criteria = $eligibility_criteria,
+                g.documentation_requirements = $documentation_requirements,
+                g.processing_rules = $processing_rules,
+                g.source_document = $document_id,
+                g.processed_at = datetime()
+            MERGE (d)-[:PROCESSED_INTO]->(g)
+            RETURN g.guidelines_id as guidelines_id
+            """
+            
+            params = {
+                "document_id": document_id,
+                "guidelines_id": f"guidelines_{document_id}_{int(time.time())}",
+                "content": guidelines_data.get("content", ""),
+                "sections": guidelines_data.get("sections", []),
+                "discovered_programs": guidelines_data.get("discovered_programs", []),
+                "eligibility_criteria": json.dumps(guidelines_data.get("eligibility_criteria", {})),
+                "documentation_requirements": json.dumps(guidelines_data.get("documentation_requirements", {})),
+                "processing_rules": json.dumps(guidelines_data.get("processing_rules", {}))
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating processed guidelines node: {str(e)}")
+            return False
+    
+    def create_processed_matrix_node(self, document_id: str, matrix_data: dict, program_id: str = None) -> bool:
+        """Create a Matrix node from processed document content"""
+        try:
+            logging.info(f"Creating processed matrix node from document: {document_id}")
+            
+            query = """
+            MATCH (d:Document {fileName: $document_id})
+            MERGE (m:Matrix {matrix_id: $matrix_id})
+            SET m.content = $content,
+                m.dimensions = $dimensions,
+                m.cells = $cells,
+                m.ranges = $ranges,
+                m.matrix_type = $matrix_type,
+                m.source_document = $document_id,
+                m.processed_at = datetime()
+            MERGE (d)-[:PROCESSED_INTO]->(m)
+            """
+            
+            # If program_id provided, link to program
+            if program_id:
+                query += """
+                WITH m
+                MATCH (prog:Program {program_id: $program_id})
+                MERGE (prog)-[:USES_MATRIX]->(m)
+                """
+            
+            query += " RETURN m.matrix_id as matrix_id"
+            
+            params = {
+                "document_id": document_id,
+                "matrix_id": f"matrix_{document_id}_{int(time.time())}",
+                "content": matrix_data.get("content", ""),
+                "dimensions": matrix_data.get("dimensions", []),
+                "cells": json.dumps(matrix_data.get("cells", [])),
+                "ranges": json.dumps(matrix_data.get("ranges", {})),
+                "matrix_type": matrix_data.get("matrix_type", "unknown")
+            }
+            
+            if program_id:
+                params["program_id"] = program_id
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating processed matrix node: {str(e)}")
+            return False
+    
+    def update_package_document_processing_status(self, package_document_id: str, status: str) -> bool:
+        """Update the processing status of a PackageDocument"""
+        try:
+            query = """
+            MATCH (pd:PackageDocument {document_id: $package_document_id})
+            SET pd.processing_status = $status,
+                pd.processing_updated_at = datetime()
+            RETURN pd.document_id as document_id
+            """
+            
+            params = {
+                "package_document_id": package_document_id,
+                "status": status  # PENDING, PROCESSING, COMPLETED, FAILED
+            }
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error updating package document processing status: {str(e)}")
+            return False
+    
+    def get_package_completion_status(self, package_id: str) -> dict:
+        """Get completion status of all documents in a package"""
+        try:
+            query = """
+            MATCH (pkg:DocumentPackage {package_id: $package_id})-[:CONTAINS_CATEGORY]->(cat:MortgageCategory)
+            MATCH (cat)-[:CONTAINS_PRODUCT]->(prod:Product)
+            MATCH (prod)-[:EXPECTS_DOCUMENT]->(pd:PackageDocument)
+            OPTIONAL MATCH (pd)-[:HAS_UPLOADED]->(doc:Document)
+            RETURN cat.category_code as category,
+                   prod.product_name as product,
+                   pd.document_type as document_type,
+                   pd.document_name as document_name,
+                   pd.has_upload as has_upload,
+                   pd.processing_status as processing_status,
+                   doc.fileName as uploaded_file,
+                   doc.status as document_status
+            ORDER BY cat.category_code, prod.product_name, pd.document_type
+            """
+            
+            params = {"package_id": package_id}
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            
+            # Summarize results
+            total_expected = len(result)
+            uploaded = sum(1 for r in result if r.get("has_upload", False))
+            processed = sum(1 for r in result if r.get("processing_status") == "COMPLETED")
+            
+            return {
+                "package_id": package_id,
+                "total_expected_documents": total_expected,
+                "uploaded_documents": uploaded,
+                "processed_documents": processed,
+                "completion_percentage": (processed / total_expected * 100) if total_expected > 0 else 0,
+                "details": result
+            }
+            
+        except Exception as e:
+            logging.error(f"Error getting package completion status: {str(e)}")
+            return {
+                "package_id": package_id,
+                "error": str(e),
+                "total_expected_documents": 0,
+                "uploaded_documents": 0,
+                "processed_documents": 0,
+                "completion_percentage": 0,
+                "details": []
+            }
+    
+    def get_discovered_programs_for_product(self, product_id: str) -> list:
+        """Get all programs discovered during processing for a product"""
+        try:
+            query = """
+            MATCH (p:Product {product_id: $product_id})-[:HAS_PROGRAM]->(prog:Program)
+            WHERE prog.discovered_from IS NOT NULL
+            OPTIONAL MATCH (prog)-[:USES_MATRIX]->(m:Matrix)
+            RETURN prog.program_id as program_id,
+                   prog.program_name as program_name,
+                   prog.program_code as program_code,
+                   prog.discovered_from as discovered_from,
+                   prog.discovered_at as discovered_at,
+                   collect(m.matrix_id) as associated_matrices
+            ORDER BY prog.program_name
+            """
+            
+            params = {"product_id": product_id}
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return result
+            
+        except Exception as e:
+            logging.error(f"Error getting discovered programs: {str(e)}")
+            return []
+    
+    def _create_content_type_relationships(self, file_name: str, document_type: str, product_id: str) -> bool:
+        """Create or update content-type-specific relationships and nodes"""
+        try:
+            if document_type == 'Guidelines':
+                # Create or find Guidelines content node and link to Document
+                query = """
+                MATCH (d:Document {fileName: $file_name})
+                MATCH (p:Product {product_id: $product_id})
+                
+                // Create Guidelines content node if it doesn't exist
+                MERGE (g:Guidelines {
+                    source_document: $file_name,
+                    product_id: $product_id
+                })
+                ON CREATE SET 
+                    g.guidelines_id = $guidelines_id,
+                    g.content = '',
+                    g.sections = [],
+                    g.discovered_programs = [],
+                    g.created_at = datetime(),
+                    g.processing_status = 'PENDING'
+                
+                // Create relationships
+                MERGE (d)-[:PROCESSED_INTO]->(g)
+                MERGE (p)-[:HAS_GUIDELINES]->(g)
+                
+                RETURN g.guidelines_id as guidelines_id
+                """
+                
+                params = {
+                    'file_name': file_name,
+                    'product_id': product_id,
+                    'guidelines_id': f"guidelines_{product_id}_{int(time.time())}"
+                }
+                
+            elif document_type == 'Matrix':
+                # Create or find Matrix content node and link to Document
+                query = """
+                MATCH (d:Document {fileName: $file_name})
+                MATCH (p:Product {product_id: $product_id})
+                
+                // Create Matrix content node if it doesn't exist
+                MERGE (m:Matrix {
+                    source_document: $file_name,
+                    product_id: $product_id
+                })
+                ON CREATE SET 
+                    m.matrix_id = $matrix_id,
+                    m.content = '',
+                    m.dimensions = [],
+                    m.cells = [],
+                    m.matrix_type = 'pricing',
+                    m.created_at = datetime(),
+                    m.processing_status = 'PENDING'
+                
+                // Create relationships
+                MERGE (d)-[:PROCESSED_INTO]->(m)
+                MERGE (p)-[:HAS_MATRIX]->(m)
+                
+                RETURN m.matrix_id as matrix_id
+                """
+                
+                params = {
+                    'file_name': file_name,
+                    'product_id': product_id,
+                    'matrix_id': f"matrix_{product_id}_{int(time.time())}"
+                }
+            
+            else:
+                return False
+            
+            result = self.graph.query(query, params, session_params={"database": self.graph._database})
+            return len(result) > 0
+            
+        except Exception as e:
+            logging.error(f"Error creating content type relationships: {str(e)}")
+            return False
