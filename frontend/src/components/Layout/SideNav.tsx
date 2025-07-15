@@ -82,7 +82,7 @@ const SideNav: React.FC<SideNavProps> = ({
 
     if (!isLargeDesktop && position === 'left') {
       dataSourceItems.push(
-        <SpotlightTarget id='dropzone' indicatorVariant='point' indicatorPlacement='middle-right'>
+        <SpotlightTarget key='dropzone-spotlight' id='dropzone' indicatorVariant='point' indicatorPlacement='middle-right'>
           <SideNavigation.Item
             key='local'
             icon={
@@ -150,6 +150,7 @@ const SideNav: React.FC<SideNavProps> = ({
         <SideNavigation.List>
           {isExpanded && isLargeDesktop && (
             <SideNavigation.Item
+              key="expanded-arrow"
               htmlAttributes={{ onClick: handleClick }}
               icon={
                 position === 'left' ? (
@@ -162,6 +163,7 @@ const SideNav: React.FC<SideNavProps> = ({
           )}
           {!isExpanded && position === 'left' && isLargeDesktop && (
             <SideNavigation.Item
+              key="collapsed-sources"
               htmlAttributes={{ onClick: handleClick }}
               icon={
                 <TooltipWrapper tooltip={tooltips.sources} placement='right'>
@@ -172,7 +174,7 @@ const SideNav: React.FC<SideNavProps> = ({
           )}
 
           {position === 'right' && !isExpanded && (
-            <SpotlightTarget id='chatbtn' indicatorVariant='point' indicatorPlacement='middle-left'>
+            <SpotlightTarget key="chat-button" id='chatbtn' indicatorVariant='point' indicatorPlacement='middle-left'>
               <SideNavigation.Item
                 htmlAttributes={{ onClick: handleClick }}
                 icon={
@@ -186,7 +188,7 @@ const SideNav: React.FC<SideNavProps> = ({
           {renderDataSourceItems()}
           {position === 'right' && isExpanded && (
             <>
-              <Tooltip type='simple' placement={'left'}>
+              <Tooltip key="clear-chat" type='simple' placement={'left'}>
                 <SideNavigation.Item
                   htmlAttributes={{ onClick: deleteOnClick }}
                   icon={
@@ -199,7 +201,7 @@ const SideNav: React.FC<SideNavProps> = ({
                   }
                 />
               </Tooltip>
-              <Tooltip type='simple' placement={'left'}>
+              <Tooltip key="maximize" type='simple' placement={'left'}>
                 <SideNavigation.Item
                   htmlAttributes={{ onClick: handleExpandClick }}
                   icon={
@@ -212,7 +214,7 @@ const SideNav: React.FC<SideNavProps> = ({
                   }
                 />
               </Tooltip>
-              <Tooltip type='simple' placement={'left'}>
+              <Tooltip key="download" type='simple' placement={'left'}>
                 <SideNavigation.Item
                   htmlAttributes={{
                     onClick: () => {
@@ -240,6 +242,7 @@ const SideNav: React.FC<SideNavProps> = ({
               </Tooltip>
               {!isChatModalOpen && (
                 <SideNavigation.Item
+                  key="menu-item"
                   ref={anchorMenuRef}
                   icon={
                     <>

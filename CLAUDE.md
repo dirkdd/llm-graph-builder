@@ -9,6 +9,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Backend development**: `cd backend && ./activate_env.sh && source venv/bin/activate && uvicorn score:app --reload` (runs on port 8000)
 - **Docker development**: `docker-compose up` (full stack with database)
 
+### Running Backend and Frontend Separately for Testing/Development
+
+When developing and testing, you often need to run frontend and backend servers independently:
+
+#### **Frontend Server (for UI development and testing)**
+```bash
+cd frontend
+npm install                    # Install dependencies
+npm run dev           # Start development server on port 8080
+```
+
+#### **Backend Server (for API development and testing)**
+```bash
+cd backend
+source venv/bin/activate                           # Activate existing virtual environment
+uvicorn score:app --reload                         # Start backend server on port 8000
+```
+
+**Environment Setup Notes**:
+- The backend uses the existing `venv/` virtual environment with all packages pre-installed
+- No need to create new virtual environment - use `source venv/bin/activate`
+- For first-time setup, use `./activate_env.sh` to initialize the environment
+
+**Testing with Both Services**:
+1. Start backend: `cd backend && source venv/bin/activate && uvicorn score:app --reload`
+2. Start frontend: `cd frontend && yarn run dev`  
+3. Access application at `http://localhost:8080` (frontend proxies API calls to backend on port 8000)
+
 ### Frontend Commands
 - **Build**: `cd frontend && yarn build`
 - **Lint**: `cd frontend && yarn lint`

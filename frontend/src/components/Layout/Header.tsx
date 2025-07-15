@@ -1,5 +1,5 @@
-import Neo4jLogoBW from '../../logo.svg';
-import Neo4jLogoColor from '../../logo-color.svg';
+import IntelEngiLogo from '../../intellengi-logo.svg';
+import IntelEngiLogoColor from '../../intellengi-logo-color.svg';
 import {
   MoonIconOutline,
   SunIconOutline,
@@ -24,6 +24,7 @@ import { HeaderProp } from '../../types';
 import { downloadClickHandler, getIsLoading } from '../../utils/Utils';
 import Profile from '../User/Profile';
 import { useAuth0 } from '@auth0/auth0-react';
+import { PackageManagementButton } from '../PackageManagement/PackageManagementButton';
 
 const Header: React.FC<HeaderProp> = ({ chatOnly, deleteOnClick, setOpenConnection, showBackButton }) => {
   const { colorMode, toggleColorMode } = useContext(ThemeWrapperContext);
@@ -89,9 +90,9 @@ const Header: React.FC<HeaderProp> = ({ chatOnly, deleteOnClick, setOpenConnecti
           <section className='flex w-1/3 shrink-0 grow-0 items-center min-w-[200px]'>
             <Typography variant='h1'>
               <img
-                src={colorMode === 'dark' ? Neo4jLogoBW : Neo4jLogoColor}
+                src={colorMode === 'dark' ? IntelEngiLogo : IntelEngiLogoColor}
                 className='h-8! min-h-8 min-w-8'
-                alt='Neo4j Logo'
+                alt='IntelEngi Logo'
               />
             </Typography>
           </section>
@@ -150,6 +151,7 @@ const Header: React.FC<HeaderProp> = ({ chatOnly, deleteOnClick, setOpenConnecti
                   >
                     <ArrowTopRightOnSquareIconOutline />
                   </IconButtonWithToolTip>
+                  <PackageManagementButton />
                   {!SKIP_AUTH && <Profile />}
                   {pathname === '/readonly' &&
                     (!connectionStatus ? (

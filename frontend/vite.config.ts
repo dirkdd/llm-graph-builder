@@ -9,7 +9,53 @@ export default defineConfig(({ mode }) => {
     define: {
       'process.env': env,
     },
-    plugins: [react()],
-    optimizeDeps: { esbuildOptions: { target: 'es2020' } },
+    plugins: [react({ 
+      // Enable Fast Refresh for better HMR performance
+      fastRefresh: true,
+      // Use SWC for faster compilation
+      jsxRuntime: 'automatic'
+    })],
+    optimizeDeps: { 
+      esbuildOptions: { target: 'es2020' },
+      // Pre-bundle common dependencies
+      include: [
+        'react',
+        'react-dom',
+        '@mui/material',
+        '@mui/icons-material',
+        '@heroicons/react',
+        'axios',
+        'react-router-dom'
+      ]
+    },
+    server: {
+      // Enable file system cache
+      fs: {
+        cachedChecks: false
+      },
+      // Increase verbosity for debugging
+      hmr: {
+        overlay: true
+      }
+    },
+    logLevel: 'info',
+    build: {
+      // Use esbuild for faster builds
+      target: 'es2020',
+      // Enable source maps only in development
+      sourcemap: mode === 'development',
+      // Increase chunk size warning limit
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          // Manual chunk splitting for better caching
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            mui: ['@mui/material', '@mui/icons-material'],
+            router: ['react-router', 'react-router-dom']
+          }
+        }
+      }
+    }
   };
 });

@@ -4,19 +4,25 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc && vite build",
+    "dev": "npm run validate-heroicons && vite --host 0.0.0.0",
+    "build": "npm run validate-icons && tsc && vite build",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "lint": "eslint --ext .ts --ext .tsx . --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "lint-staged": "lint-staged --config .lintstagedrc.json",
-    "postinstall": "cd .. && husky frontend/.husky"
+    "postinstall": "cd .. && husky frontend/.husky",
+    "validate-icons": "node icon-validator.cjs",
+    "validate-package-icons": "node validate-package-icons.cjs",
+    "validate-heroicons": "node validate-heroicons.cjs"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.2.4",
     "@emotion/styled": "^11.14.0",
+    "@heroicons/react": "^2.2.0",
+    "@mui/icons-material": "^5.18.0",
     "@mui/material": "^5.15.10",
     "@mui/styled-engine": "^7.1.0",
+    "@mui/x-tree-view": "^8.8.0",
     "@neo4j-devtools/word-color": "^0.0.8",
     "@neo4j-ndl/base": "^3.2.9",
     "@neo4j-ndl/react": "^3.2.18",
@@ -57,7 +63,7 @@
     "prettier": "^3.5.3",
     "react-dropzone": "^14.3.8",
     "tailwindcss": "^4.1.5",
-    "typescript": "^5.7.3",
+    "typescript": "^5.8.3",
     "vite": "^4.5.3"
   }
 }

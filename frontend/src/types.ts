@@ -36,6 +36,16 @@ export interface CustomFileBase extends Partial<globalThis.File> {
   communityNodeCount: number;
   communityRelCount: number;
   createdAt?: Date;
+  // Package-aware processing fields
+  package_id?: string;
+  package_name?: string;
+  processing_type?: 'standard' | 'package';
+  document_type?: 'Guidelines' | 'Matrix' | 'Supporting' | 'Other';
+  expected_structure?: {
+    navigation_depth: number;
+    required_sections: string[];
+    decision_trees: string[];
+  };
 }
 export interface CustomFile extends CustomFileBase {
   id: string;
@@ -86,6 +96,10 @@ export type ExtractParams = Pick<CustomFile, 'wikiQuery' | 'model' | 'sourceUrl'
   gcs_project_id?: string;
   retry_condition: string;
   additional_instructions?: string;
+  // Package-aware processing parameters
+  package_id?: string;
+  processing_type?: 'standard' | 'package';
+  package_metadata?: string; // JSON stringified package info
 } & { [key: string]: any };
 
 export type UploadParams = {
@@ -1113,4 +1127,222 @@ export interface SchemaSelectionProps {
   onCancel: () => void;
   view?: string;
   message?: string;
+}
+
+// Package Management Types
+export interface DocumentPackage {
+  package_id: string;
+  package_name: string;
+  category: 'NQM' | 'RTL' | 'SBC' | 'CONV';
+  template_type: string;
+  version: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'DRAFT';
+  created_at: string;
+  updated_at: string;
+  documents: DocumentDefinition[];
+  metadata: Record<string, any>;
+}
+
+export interface DocumentDefinition {
+  document_id: string;
+  document_name: string;
+  document_type: 'GUIDELINE' | 'MATRIX' | 'TEMPLATE' | 'REFERENCE';
+  required: boolean;
+  expected_structure: {
+    navigation_depth: number;
+    required_sections: string[];
+    decision_trees: string[];
+  };
+  processing_config: Record<string, any>;
+}
+
+export interface PackageFormData {
+  package_name: string;
+  category: string;
+  template: string;
+  customizations: Record<string, any>;
+}
+
+export interface PackageVersion {
+  version_id: string;
+  package_id: string;
+  version: string;
+  created_at: string;
+  changes: VersionChange[];
+  snapshot_data: string;
+}
+
+export interface VersionChange {
+  change_type: 'MAJOR' | 'MINOR' | 'PATCH';
+  description: string;
+  document_changes: DocumentChange[];
+}
+
+export interface DocumentChange {
+  document_id: string;
+  action: 'ADDED' | 'MODIFIED' | 'REMOVED';
+  old_value?: any;
+  new_value?: any;
+}
+
+export interface NavigationNode {
+  enhanced_node_id: string;
+  node_type: 'CHAPTER' | 'SECTION' | 'SUBSECTION' | 'DECISION_FLOW_SECTION';
+  title: string;
+  depth_level: number;
+  parent_id?: string;
+  children?: NavigationNode[];
+  chapter_number?: number;
+  section_number?: number;
+  requires_complete_tree: boolean;
+}
+
+export interface NavigationTree {
+  nodes: NavigationNode[];
+  decision_trees: DecisionTree[];
+  metadata: {
+    extraction_accuracy: number;
+    total_nodes: number;
+    decision_sections: number;
+  };
+}
+
+export interface DecisionTree {
+  section_id: string;
+  is_complete: boolean;
+  root?: DecisionNode;
+  branches?: DecisionNode[];
+  leaves?: DecisionNode[];
+  paths?: DecisionPath[];
+}
+
+export interface DecisionNode {
+  enhanced_node_id: string;
+  title: string;
+  node_type: 'ROOT' | 'BRANCH' | 'LEAF';
+  outcome?: string;
+  evaluation_precedence?: number;
+}
+
+export interface DecisionPath {
+  steps: string[];
+  outcome: string;
+}
+
+export interface PackageContext {
+  packages: DocumentPackage[];
+  selectedPackage: DocumentPackage | null;
+  loadPackages: () => Promise<void>;
+  selectPackage: (packageId: string) => void;
+  createPackage: (formData: PackageFormData) => Promise<DocumentPackage>;
+  applyPackage: (packageId: string) => Promise<void>;
+  isLoading: boolean;
+  error: string | null;
+}
+
+// Package Processing Status Types
+export interface PackageProcessingStatus {
+  package_id: string;
+  overall_status: 'pending' | 'processing' | 'completed' | 'failed';
+  processing_steps: ProcessingStep[];
+  package_metadata?: {
+    total_entities: number;
+    total_relationships: number;
+    decision_trees_extracted: number;
+  };
+  errors?: ProcessingError[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProcessingStep {
+  name: string;
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  completed: boolean;
+  active: boolean;
+  start_time?: string;
+  end_time?: string;
+}
+
+export interface ProcessingError {
+  error_id: string;
+  file_name?: string;
+  step_name: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface PackageFile extends CustomFileBase {
+  id: string;
+  package_id: string;
+  processing_status: 'pending' | 'processing' | 'completed' | 'failed';
+  entity_count?: number;
+  relationship_count?: number;
+  processing_time?: number;
+  navigation_extracted?: boolean;
+  decision_trees_found?: number;
+}
+
+// Hierarchical Package System Types
+export interface PackageHierarchyItem {
+  id: string;
+  type: 'category' | 'product' | 'file';
+  name: string;
+  parentId?: string;
+  children?: PackageHierarchyItem[];
+  data?: any; // Category, Product, or File specific data
+  expanded?: boolean;
+  selected?: boolean;
+}
+
+export interface PackageCategory {
+  id: string;
+  name: string;
+  type: 'NQM' | 'RTL' | 'SBC' | 'CONV';
+  description?: string;
+  products: PackageProduct[];
+  created_at: string;
+  color?: 'primary' | 'secondary' | 'success' | 'warning';
+}
+
+export interface PackageProduct {
+  id: string;
+  name: string;
+  categoryId: string;
+  documents: CustomFile[];
+  completionStatus: PackageCompletionStatus;
+  created_at: string;
+  template_type?: string;
+}
+
+export interface PackageCompletionStatus {
+  isComplete: boolean;
+  requiredDocuments: string[];
+  uploadedDocuments: string[];
+  missingDocuments: string[];
+  completionPercentage: number;
+}
+
+export interface PackageSelectionContext {
+  selectedCategory?: PackageCategory;
+  selectedProduct?: PackageProduct;
+  selectedFiles?: CustomFile[];
+  selectionType: 'none' | 'category' | 'product' | 'file' | 'multiple';
+}
+
+export interface PackageHierarchy {
+  categories: {
+    [categoryId: string]: PackageCategory;
+  };
+  flattenedItems: PackageHierarchyItem[];
+  totalFiles: number;
+  totalCategories: number;
+  totalProducts: number;
+}
+
+export interface DragDropContext {
+  draggedItem?: PackageHierarchyItem;
+  dropTarget?: PackageHierarchyItem;
+  dropPosition?: 'before' | 'after' | 'inside';
+  isDragging: boolean;
 }

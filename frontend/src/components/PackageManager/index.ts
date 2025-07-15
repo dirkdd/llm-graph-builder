@@ -1,4 +1,4 @@
 // PackageManager component exports
-// This file will be populated during Task 17
-
-export {};
+export { PackageManager } from './PackageManager';
+export { PackageCreator } from './PackageCreator';
+export { PackageList } from './PackageList';

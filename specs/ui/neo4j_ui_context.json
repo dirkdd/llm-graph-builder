@@ -1,0 +1,214 @@
+{
+  "project": {
+    "name": "Neo4j Graph Database Interface",
+    "description": "Advanced graph database management interface with document processing and web source integration",
+    "version": "1.0.0",
+    "platform": "Web Application"
+  },
+  "design_system": {
+    "theme": {
+      "primary": "Dark Mode",
+      "style": "Modern Technical Dashboard",
+      "aesthetic": "Professional Database Management Tool"
+    },
+    "color_palette": {
+      "background": {
+        "primary": "#1a1a1a",
+        "secondary": "#2d2d2d",
+        "tertiary": "#3a3a3a"
+      },
+      "text": {
+        "primary": "#ffffff",
+        "secondary": "#b0b0b0",
+        "muted": "#808080"
+      },
+      "accent": {
+        "primary": "#00d4aa",
+        "secondary": "#4a9eff",
+        "success": "#00ff88",
+        "warning": "#ff9500",
+        "error": "#ff4757"
+      },
+      "interactive": {
+        "button_primary": "#00d4aa",
+        "button_secondary": "#4a4a4a",
+        "hover": "#00b894",
+        "focus": "#00d4aa"
+      },
+      "status": {
+        "online": "#00ff88",
+        "failed": "#ff4757",
+        "completed": "#00ff88",
+        "new": "#4a9eff",
+        "processing": "#ff9500"
+      }
+    },
+    "typography": {
+      "font_family": "System UI, -apple-system, sans-serif",
+      "font_weights": {
+        "light": 300,
+        "regular": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700
+      },
+      "font_sizes": {
+        "xs": "11px",
+        "sm": "12px",
+        "base": "14px",
+        "lg": "16px",
+        "xl": "18px",
+        "2xl": "20px"
+      }
+    },
+    "spacing": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "16px",
+      "lg": "24px",
+      "xl": "32px",
+      "2xl": "48px"
+    },
+    "border_radius": {
+      "none": "0px",
+      "sm": "4px",
+      "md": "6px",
+      "lg": "8px",
+      "xl": "12px"
+    }
+  },
+  "layout_structure": {
+    "layout_type": "Dashboard with Sidebar",
+    "header": {
+      "height": "60px",
+      "contains": ["logo", "connection_status", "user_actions"],
+      "style": "Fixed top navigation"
+    },
+    "sidebar": {
+      "width": "280px",
+      "position": "Left side",
+      "collapsible": true,
+      "sections": ["drag_drop_zone", "web_sources", "amazon_s3"]
+    },
+    "main_content": {
+      "layout": "Full width with padding",
+      "sections": ["data_table", "processing_status", "action_buttons"]
+    },
+    "footer": {
+      "height": "auto",
+      "contains": ["model_selector", "action_buttons"]
+    }
+  },
+  "component_patterns": {
+    "tables": {
+      "style": "Dark themed data grid",
+      "features": ["sortable_columns", "status_indicators", "bulk_selection", "context_menus"],
+      "row_styling": "Alternating subtle background with hover states",
+      "headers": "Bold with sort indicators"
+    },
+    "buttons": {
+      "primary": {
+        "background": "#00d4aa",
+        "text": "white",
+        "hover": "darken 10%",
+        "border_radius": "6px"
+      },
+      "secondary": {
+        "background": "transparent",
+        "border": "1px solid #4a4a4a",
+        "text": "#b0b0b0",
+        "hover": "background #3a3a3a"
+      }
+    },
+    "inputs": {
+      "style": "Dark background with light borders",
+      "focus_state": "Accent color border",
+      "placeholder": "Muted text color"
+    },
+    "modals": {
+      "backdrop": "Semi-transparent dark overlay",
+      "container": "Rounded corners with dark background",
+      "animation": "Fade in with scale"
+    },
+    "status_indicators": {
+      "visual_style": "Colored dots with text labels",
+      "positioning": "Inline with content",
+      "states": ["connected", "failed", "completed", "new", "processing"]
+    }
+  },
+  "interaction_patterns": {
+    "navigation": {
+      "primary": "Sidebar navigation with icons",
+      "secondary": "Breadcrumbs and tabs",
+      "mobile": "Collapsible hamburger menu"
+    },
+    "data_management": {
+      "upload": "Drag and drop with browse option",
+      "processing": "Real-time status updates",
+      "actions": "Contextual buttons and dropdown menus"
+    },
+    "feedback": {
+      "success": "Green status indicators and notifications",
+      "errors": "Red status with descriptive messages",
+      "loading": "Progress bars and spinners"
+    }
+  },
+  "content_strategy": {
+    "tone": "Technical and precise",
+    "language": "Database and developer terminology",
+    "help_text": "Contextual tooltips and inline guidance",
+    "error_messages": "Clear, actionable error descriptions"
+  },
+  "accessibility": {
+    "contrast": "High contrast for dark theme",
+    "keyboard_navigation": "Full keyboard support",
+    "screen_readers": "Semantic HTML and ARIA labels",
+    "focus_indicators": "Clear focus states with accent colors"
+  },
+  "responsive_behavior": {
+    "breakpoints": {
+      "mobile": "< 768px",
+      "tablet": "768px - 1024px",
+      "desktop": "> 1024px"
+    },
+    "adaptations": {
+      "mobile": "Collapsible sidebar, stacked layout",
+      "tablet": "Condensed sidebar, adjusted spacing",
+      "desktop": "Full layout with all elements visible"
+    }
+  },
+  "specific_features": {
+    "connection_status": {
+      "visual": "Green dot with database URL",
+      "states": ["connected", "disconnected", "error"],
+      "location": "Top header"
+    },
+    "file_upload": {
+      "types": ["PDF", "Web Sources", "Amazon S3"],
+      "visual": "Drag and drop zones with icons",
+      "feedback": "Real-time upload progress"
+    },
+    "data_processing": {
+      "models": ["OpenAI GPT 4o", "Anthropic Claude 4 Sonnet"],
+      "status_tracking": "Per-file processing status",
+      "batch_operations": "Bulk actions on multiple files"
+    },
+    "graph_integration": {
+      "actions": ["Generate Graph", "Delete Files", "Preview Graph"],
+      "enhancement": "Graph Enhancement toggle",
+      "node_display": "Node count and relationship indicators"
+    }
+  },
+  "performance_considerations": {
+    "loading_states": "Skeleton screens and progress indicators",
+    "data_pagination": "Efficient table pagination",
+    "file_processing": "Background processing with status updates",
+    "optimization": "Lazy loading for large datasets"
+  },
+  "technical_constraints": {
+    "file_size_limits": "10K characters for large files",
+    "concurrent_processing": "Multiple file processing support",
+    "real_time_updates": "WebSocket or polling for status updates",
+    "error_handling": "Graceful degradation and retry mechanisms"
+  }
+}

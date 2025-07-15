@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, Suspense, useReducer, useCallback, useContext } from 'react';
-import FileTable from './FileTable';
+import FileWorkspaceContainer, { FileWorkspaceHandle } from './PackageManagement/FileWorkspaceContainer';
 import {
   Button,
   Typography,
@@ -13,7 +13,7 @@ import {
 import { useCredentials } from '../context/UserCredentials';
 import { useFileContext } from '../context/UsersFiles';
 import { extractAPI } from '../utils/FileAPI';
-import { BannerAlertProps, ContentProps, CustomFile, OptionType, chunkdata, FileTableHandle } from '../types';
+import { BannerAlertProps, ContentProps, CustomFile, OptionType, chunkdata, PackageSelectionContext } from '../types';
 import deleteAPI from '../services/DeleteFiles';
 import { postProcessing } from '../services/PostProcessing';
 import { triggerStatusUpdateAPI } from '../services/ServerSideStatusUpdateAPI';
@@ -142,7 +142,7 @@ const Content: React.FC<ContentProps> = ({
       showErrorToast(`${fileName} Failed to process`);
     }
   );
-  const childRef = useRef<FileTableHandle>(null);
+  const childRef = useRef<FileWorkspaceHandle>(null);
 
   const incrementPage = async () => {
     setCurrentPage((prev) => prev + 1);
@@ -542,6 +542,13 @@ const Content: React.FC<ContentProps> = ({
       addFilesToQueue(filesTobeProcessed as CustomFile[]);
     }
   };
+
+  const handlePackageFilesUpload = useCallback((files: File[], context: PackageSelectionContext) => {
+    // Handle package-aware file uploads
+    console.log('Package files upload:', files, context);
+    // This would integrate with the existing file upload flow
+    // but add package context to the files
+  }, []);
 
   const processWaitingFilesOnRefresh = useCallback(() => {
     let data = [];
@@ -987,7 +994,7 @@ const Content: React.FC<ContentProps> = ({
           </div>
         </Flex>
 
-        <FileTable
+        <FileWorkspaceContainer
           connectionStatus={connectionStatus}
           setConnectionStatus={setConnectionStatus}
           onInspect={useCallback((name) => {
@@ -1015,7 +1022,8 @@ const Content: React.FC<ContentProps> = ({
           )}
           ref={childRef}
           handleGenerateGraph={processWaitingFilesOnRefresh}
-        ></FileTable>
+          onFilesUpload={handlePackageFilesUpload}
+        />
 
         <Flex className={`p-2.5  mt-1.5 absolute bottom-0 w-full`} justifyContent='space-between' flexDirection={'row'}>
           <div>
