@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common Development Commands
 
 ### Local Development
-- **Frontend development**: `cd frontend && yarn && yarn run dev` (runs on port 8080)
+- **Frontend development**: `cd frontend && npm install && npm run dev` (runs on port 8080)
 - **Backend development**: `cd backend && ./activate_env.sh && source venv/bin/activate && uvicorn score:app --reload` (runs on port 8000)
 - **Docker development**: `docker-compose up` (full stack with database)
 
@@ -34,14 +34,14 @@ uvicorn score:app --reload                         # Start backend server on por
 
 **Testing with Both Services**:
 1. Start backend: `cd backend && source venv/bin/activate && uvicorn score:app --reload`
-2. Start frontend: `cd frontend && yarn run dev`  
+2. Start frontend: `cd frontend && npm run dev`  
 3. Access application at `http://localhost:8080` (frontend proxies API calls to backend on port 8000)
 
 ### Frontend Commands
-- **Build**: `cd frontend && yarn build`
-- **Lint**: `cd frontend && yarn lint`
-- **Format**: `cd frontend && yarn format`
-- **Type check**: `cd frontend && tsc`
+- **Build**: `cd frontend && npm run build`
+- **Lint**: `cd frontend && npm run lint`
+- **Format**: `cd frontend && npm run format`
+- **Type check**: `cd frontend && npx tsc --noEmit`
 
 ### Backend Commands
 - **Environment setup**: `cd backend && ./activate_env.sh` (one-time setup)
