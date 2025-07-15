@@ -16,21 +16,20 @@ import {
   Typography
 } from '@mui/material';
 import {
-  DocumentPlusIcon,
-  ArrowPathIcon,
-  FolderIcon,
-  FolderOpenIcon
-} from '@heroicons/react/24/outline';
+  Save as DocumentPlusIcon,
+  Refresh as ArrowPathIcon,
+  Folder as FolderIcon,
+  FolderOpen as FolderOpenIcon
+} from '@mui/icons-material';
 import { PackageHierarchyItem, PackageSelectionContext } from '../../types';
 
 interface PackageActionBarProps {
   selectionContext: PackageSelectionContext;
-  onAddCategory: (categoryType: string, categoryName: string) => void;
-  onAddProduct: (categoryId: string, productName: string) => void;
-  onTogglePackageMode: (enabled: boolean) => void;
-  packageModeEnabled: boolean;
+  onAddCategory: (categoryType: string, categoryName: string, categoryDescription?: string) => void;
+  onAddProduct: (categoryId: string, productName: string, productDescription?: string) => void;
   onExportPackage?: (categoryId?: string, productId?: string) => void;
   onImportPackage?: () => void;
+  onResetPackage?: () => void;
   selectedItems: PackageHierarchyItem[];
 }
 
@@ -45,31 +44,34 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
   selectionContext,
   onAddCategory,
   onAddProduct,
-  onTogglePackageMode,
-  packageModeEnabled,
   onExportPackage,
   onImportPackage,
+  onResetPackage,
   selectedItems
 }) => {
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
   const [showProductCreator, setShowProductCreator] = useState(false);
   const [newCategoryType, setNewCategoryType] = useState<string>('');
   const [newCategoryName, setNewCategoryName] = useState<string>('');
+  const [newCategoryDescription, setNewCategoryDescription] = useState<string>('');
   const [newProductName, setNewProductName] = useState<string>('');
+  const [newProductDescription, setNewProductDescription] = useState<string>('');
 
   const handleAddCategory = () => {
     if (!showCategoryCreator) {
       setShowCategoryCreator(true);
       setNewCategoryType('');
       setNewCategoryName('');
+      setNewCategoryDescription('');
       return;
     }
 
     if (newCategoryType && newCategoryName.trim()) {
-      onAddCategory(newCategoryType, newCategoryName.trim());
+      onAddCategory(newCategoryType, newCategoryName.trim(), newCategoryDescription.trim());
       setShowCategoryCreator(false);
       setNewCategoryType('');
       setNewCategoryName('');
+      setNewCategoryDescription('');
     }
   };
 
@@ -77,13 +79,15 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
     if (!showProductCreator) {
       setShowProductCreator(true);
       setNewProductName('');
+      setNewProductDescription('');
       return;
     }
 
     if (newProductName.trim() && selectionContext.selectedCategory) {
-      onAddProduct(selectionContext.selectedCategory.id, newProductName.trim());
+      onAddProduct(selectionContext.selectedCategory.id, newProductName.trim(), newProductDescription.trim());
       setShowProductCreator(false);
       setNewProductName('');
+      setNewProductDescription('');
     }
   };
 
@@ -91,11 +95,13 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
     setShowCategoryCreator(false);
     setNewCategoryType('');
     setNewCategoryName('');
+    setNewCategoryDescription('');
   };
 
   const cancelProductCreation = () => {
     setShowProductCreator(false);
     setNewProductName('');
+    setNewProductDescription('');
   };
 
   const getSelectedCategoryInfo = () => {
@@ -106,85 +112,9 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
   const selectedCategoryInfo = getSelectedCategoryInfo();
 
   return (
-    <Paper sx={{ p: 2, mb: 2, bgcolor: 'background.default' }}>
-      {/* Package Mode Toggle */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-        <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="h6">Workspace Mode</Typography>
-          <Button
-            variant={packageModeEnabled ? 'contained' : 'outlined'}
-            size="small"
-            onClick={() => onTogglePackageMode(!packageModeEnabled)}
-          >
-            {packageModeEnabled ? (
-              <><FolderOpenIcon style={{ width: '16px', height: '16px', marginRight: '8px' }} />Package Mode</>
-            ) : (
-              <><FolderIcon style={{ width: '16px', height: '16px', marginRight: '8px' }} />Standard Mode</>
-            )}
-          </Button>
-        </Box>
+    <Paper sx={{ p: 3, mb: 3, bgcolor: 'background.default' }}>
 
-        {/* Import/Export Actions */}
-        <Box display="flex" gap={1}>
-          <Tooltip title="Import Package Template">
-            <IconButton
-              size="small"
-              onClick={onImportPackage}
-              disabled={!packageModeEnabled}
-            >
-              <ArrowPathIcon />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Save Package">
-            <IconButton
-              size="small"
-              onClick={() => onExportPackage?.(
-                selectionContext.selectedCategory?.id,
-                selectionContext.selectedProduct?.id
-              )}
-              disabled={!packageModeEnabled || selectedItems.length === 0}
-            >
-              <DocumentPlusIcon />
-            </IconButton>
-          </Tooltip>
-        </Box>
-      </Box>
-
-      {/* Package Mode Description */}
-      <Typography variant="body1" style={{ color: 'var(--theme-palette-text-secondary)', marginBottom: '16px' }}>
-        {packageModeEnabled 
-          ? 'Create hierarchical document packages with categories, products, and structured file organization'
-          : 'Upload and process individual files using standard workflow'
-        }
-      </Typography>
-
-      {packageModeEnabled && (
-        <>
-          {/* Current Selection Context */}
-          {(selectionContext.selectedCategory || selectionContext.selectedProduct) && (
-            <Box mb={2}>
-              <Typography variant="subtitle1" sx={{ mb: 1 }}>Current Selection</Typography>
-              <Box display="flex" alignItems="center" gap={1}>
-                {selectionContext.selectedCategory && (
-                  <Chip 
-                    label={`${selectionContext.selectedCategory.name} (${selectionContext.selectedCategory.type})`}
-                    color={selectedCategoryInfo?.color || 'primary'}
-                    size="small"
-                  />
-                )}
-                {selectionContext.selectedProduct && (
-                  <>
-                    <Typography variant="body1" style={{ color: 'var(--theme-palette-text-secondary)' }}>→</Typography>
-                    <Chip 
-                      label={selectionContext.selectedProduct.name}
-                      variant="outlined"
-                      size="small"
-                    />
-                  </>
-                )}
-              </Box>
-            </Box>
-          )}
+      <>
 
           {/* Category Creation */}
           {(!selectionContext.selectedCategory || showCategoryCreator) && (
@@ -231,6 +161,17 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
                     value={newCategoryName}
                     onChange={(e) => setNewCategoryName(e.target.value)}
                     placeholder={newCategoryType ? `e.g., ${newCategoryType} Enhanced Program` : 'Enter category name'}
+                  />
+                  
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Category Description (Optional)"
+                    value={newCategoryDescription}
+                    onChange={(e) => setNewCategoryDescription(e.target.value)}
+                    placeholder="Describe this category's purpose and scope for enhanced LLM processing..."
+                    multiline
+                    rows={2}
                   />
                   
                   <Box display="flex" gap={1}>
@@ -282,6 +223,17 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
                     placeholder={`e.g., ${selectionContext.selectedCategory.type} Premium Program`}
                   />
                   
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Product Description (Optional)"
+                    value={newProductDescription}
+                    onChange={(e) => setNewProductDescription(e.target.value)}
+                    placeholder="Describe this product's features, target borrowers, and key characteristics for enhanced LLM processing..."
+                    multiline
+                    rows={3}
+                  />
+                  
                   <Box display="flex" gap={1}>
                     <Button
                       variant="contained"
@@ -304,59 +256,8 @@ export const PackageActionBar: React.FC<PackageActionBarProps> = ({
             </Box>
           )}
 
-          {/* Document Upload Context */}
-          {selectionContext.selectedProduct && (
-            <Box>
-              <Typography variant="subtitle1" sx={{ mb: 1 }}>Ready for Document Upload</Typography>
-              <Box display="flex" alignItems="center" gap={1} p={1} 
-                sx={{ 
-                  backgroundColor: 'rgba(76, 175, 80, 0.15)',
-                  border: '1px solid rgba(76, 175, 80, 0.3)',
-                  borderRadius: 1 
-                }}
-              >
-                <DocumentPlusIcon className="w-4 h-4" />
-                <Typography variant="body1">
-                  Files will be uploaded to: 
-                  <strong> {selectionContext.selectedCategory?.name}</strong> → 
-                  <strong> {selectionContext.selectedProduct.name}</strong>
-                </Typography>
-              </Box>
-            </Box>
-          )}
 
-          {/* Save Package Section */}
-          {selectedItems.length > 0 && (
-            <Box mt={2} p={2} 
-              sx={{ 
-                backgroundColor: 'rgba(var(--theme-palette-primary-bg-strong), 0.15)',
-                border: '1px solid rgba(var(--theme-palette-primary-bg-strong), 0.3)',
-                borderRadius: 1 
-              }}
-            >
-              <Box display="flex" justifyContent="space-between" alignItems="center">
-                <Box>
-                  <Typography variant="subtitle1" sx={{ mb: 1 }}>Package Ready</Typography>
-                  <Typography variant="body1" color="text.secondary">
-                    Save your package structure and file designations
-                  </Typography>
-                </Box>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => onExportPackage?.(
-                    selectionContext.selectedCategory?.id,
-                    selectionContext.selectedProduct?.id
-                  )}
-                  startIcon={<DocumentPlusIcon className="w-4 h-4" />}
-                >
-                  Save Package
-                </Button>
-              </Box>
-            </Box>
-          )}
-        </>
-      )}
+      </>
     </Paper>
   );
 };

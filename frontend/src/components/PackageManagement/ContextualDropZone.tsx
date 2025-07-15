@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Button,
   IconButton
@@ -11,19 +11,22 @@ import {
   Typography
 } from '@mui/material';
 import {
-  CloudArrowUpIcon,
-  DocumentIcon,
-  FolderIcon,
-  XMarkIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon
-} from '@heroicons/react/24/outline';
+  CloudUpload as CloudArrowUpIcon,
+  Description as DocumentIcon,
+  Folder as FolderIcon,
+  Close as XMarkIcon,
+  CheckCircle as CheckCircleIcon,
+  Warning as ExclamationTriangleIcon
+} from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
 import { PackageSelectionContext, CustomFile } from '../../types';
+import { DocumentTypeSlots, ExpectedDocument } from './DocumentTypeSlots';
+import { getExpectedDocuments } from '../../services/PackageAPI';
 
 interface ContextualDropZoneProps {
   selectionContext: PackageSelectionContext;
   onFilesUpload: (files: File[], context: PackageSelectionContext) => void;
+  onFileUploadWithType: (file: File, expectedDocumentId: string, documentType: string, context: PackageSelectionContext) => void;
   packageModeEnabled: boolean;
   disabled?: boolean;
   className?: string;
@@ -79,12 +82,172 @@ const DOCUMENT_TYPE_VALIDATIONS = {
 export const ContextualDropZone: React.FC<ContextualDropZoneProps> = ({
   selectionContext,
   onFilesUpload,
+  onFileUploadWithType,
   packageModeEnabled,
   disabled = false,
   className
 }) => {
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [expectedDocuments, setExpectedDocuments] = useState<ExpectedDocument[]>([]);
+  const [loadingExpectedDocs, setLoadingExpectedDocs] = useState(false);
+  const [useDocumentSlots, setUseDocumentSlots] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const maxFetchRetries = 3;
+
+  // Fetch expected documents when product is selected
+  useEffect(() => {
+    const fetchExpectedDocuments = async (attempt = 0) => {
+      if (packageModeEnabled && 
+          selectionContext.selectionType === 'product' && 
+          selectionContext.selectedProduct?.id) {
+        
+        setLoadingExpectedDocs(true);
+        setFetchError(null);
+        
+        try {
+          const response = await getExpectedDocuments(selectionContext.selectedProduct.id);
+          if (response.status === 'Success' && response.data?.expected_documents) {
+            setExpectedDocuments(response.data.expected_documents);
+            setUseDocumentSlots(response.data.expected_documents.length > 0);
+            setRetryCount(0);
+            setFetchError(null);
+          } else {
+            throw new Error(response.message || 'No expected documents returned');
+          }
+        } catch (error) {
+          console.error('Error fetching expected documents:', error);
+          
+          let errorMessage = 'Failed to load document requirements';
+          let shouldRetry = false;
+          
+          if (error instanceof Error) {
+            if (error.message.includes('NetworkError') || error.message.includes('fetch')) {
+              errorMessage = 'Network connection error. Please check your internet connection.';
+              shouldRetry = true;
+            } else if (error.message.includes('404')) {
+              errorMessage = 'No document templates found for this product.';
+              shouldRetry = false;
+            } else if (error.message.includes('401') || error.message.includes('403')) {
+              errorMessage = 'You do not have permission to access this product.';
+              shouldRetry = false;
+            } else if (error.message.includes('500') || error.message.includes('502') || error.message.includes('503')) {
+              errorMessage = 'Server error. Please try again in a moment.';
+              shouldRetry = true;
+            } else {
+              errorMessage = error.message || errorMessage;
+              shouldRetry = true;
+            }
+          }
+          
+          setFetchError(errorMessage);
+          setExpectedDocuments([]);
+          setUseDocumentSlots(false);
+          
+          // Auto-retry for network/server errors
+          if (shouldRetry && attempt < maxFetchRetries) {
+            const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+            setTimeout(() => {
+              setRetryCount(attempt + 1);
+              fetchExpectedDocuments(attempt + 1);
+            }, delay);
+          } else {
+            // Fall back to standard upload mode
+            setUseDocumentSlots(false);
+          }
+        } finally {
+          setLoadingExpectedDocs(false);
+        }
+      } else {
+        setExpectedDocuments([]);
+        setUseDocumentSlots(false);
+        setFetchError(null);
+      }
+    };
+
+    fetchExpectedDocuments();
+  }, [packageModeEnabled, selectionContext.selectionType, selectionContext.selectedProduct?.id]);
+
+  // Handle file upload with pre-selected document type
+  const handleFileUploadWithType = useCallback(async (file: File, expectedDocumentId: string, documentType: string) => {
+    try {
+      // Call the upload handler
+      onFileUploadWithType(file, expectedDocumentId, documentType, selectionContext);
+      
+      // Refresh expected documents after upload completes
+      setTimeout(async () => {
+        if (selectionContext.selectedProduct?.id) {
+          try {
+            const response = await getExpectedDocuments(selectionContext.selectedProduct.id);
+            if (response.status === 'Success' && response.data?.expected_documents) {
+              setExpectedDocuments(response.data.expected_documents);
+              console.log('✅ Refreshed expected documents after upload');
+              
+              // Find the uploaded document and update its status to "uploaded"
+              const uploadedDoc = response.data.expected_documents.find(doc => 
+                doc.id === expectedDocumentId && doc.upload_status === 'uploaded'
+              );
+              
+              if (uploadedDoc) {
+                console.log(`✅ Document ${file.name} confirmed as uploaded in backend`);
+              }
+            }
+          } catch (error) {
+            console.error('Failed to refresh expected documents:', error);
+            // If refresh fails, at least update the local state to show upload completion
+            setExpectedDocuments(prev => prev.map(doc => 
+              doc.id === expectedDocumentId 
+                ? { 
+                    ...doc, 
+                    upload_status: 'uploaded',
+                    uploaded_file: {
+                      fileName: file.name,
+                      fileSize: file.size,
+                      uploadDate: new Date().toISOString(),
+                      processingStatus: 'completed'
+                    }
+                  }
+                : doc
+            ));
+          }
+        }
+      }, 1500); // 1.5 second delay to allow backend processing
+      
+    } catch (error) {
+      console.error('Upload error:', error);
+    }
+  }, [onFileUploadWithType, selectionContext]);
+
+  // Manual retry for expected documents fetch
+  const handleRetryFetch = useCallback(() => {
+    if (selectionContext.selectedProduct?.id) {
+      const fetchExpectedDocuments = async () => {
+        setLoadingExpectedDocs(true);
+        setFetchError(null);
+        setRetryCount(0);
+        
+        try {
+          const response = await getExpectedDocuments(selectionContext.selectedProduct.id);
+          if (response.status === 'Success' && response.data?.expected_documents) {
+            setExpectedDocuments(response.data.expected_documents);
+            setUseDocumentSlots(response.data.expected_documents.length > 0);
+            setFetchError(null);
+          } else {
+            throw new Error(response.message || 'No expected documents returned');
+          }
+        } catch (error) {
+          console.error('Retry failed:', error);
+          setFetchError(error instanceof Error ? error.message : 'Retry failed');
+          setUseDocumentSlots(false);
+        } finally {
+          setLoadingExpectedDocs(false);
+        }
+      };
+      
+      fetchExpectedDocuments();
+    }
+  }, [selectionContext.selectedProduct?.id]);
 
   const getValidationRules = () => {
     if (!packageModeEnabled || !selectionContext.selectedCategory) {
@@ -220,31 +383,103 @@ export const ContextualDropZone: React.FC<ContextualDropZoneProps> = ({
   );
 
   return (
-    <Box className={className}>
-      {/* Upload Context Display */}
-      {packageModeEnabled && selectionContext.selectionType !== 'none' && (
-        <Box mb={2}>
-          <Alert severity={contextMessage.status} variant="outlined">
-            <Box display="flex" alignItems="center" justifyContent="space-between">
-              <Box>
-                <Typography variant="subtitle1">{contextMessage.title}</Typography>
-                {contextMessage.context && (
-                  <Box display="flex" alignItems="center" gap={1} mt={0.5}>
-                    <FolderIcon className="w-4 h-4" />
-                    <Typography variant="body2">{contextMessage.context}</Typography>
-                  </Box>
-                )}
-              </Box>
-              {contextMessage.status === 'success' && (
-                <CheckCircleIcon className="w-5 h-5 text-green-500" />
-              )}
-            </Box>
-          </Alert>
+    <Box 
+      className={className}
+      sx={{ 
+        width: '100%', 
+        maxWidth: '100%',
+        boxSizing: 'border-box'
+      }}
+    >
+
+      {/* Document Type Slots (Package Mode with Expected Documents) */}
+      {useDocumentSlots && !loadingExpectedDocs && (
+        <Box sx={{ width: '100%', maxWidth: '100%' }}>
+          <DocumentTypeSlots
+            expectedDocuments={expectedDocuments}
+            onFileUpload={handleFileUploadWithType}
+            uploadProgress={uploadProgress}
+            disabled={disabled}
+            loading={loadingExpectedDocs}
+            onError={(uploadError) => {
+              console.error('Upload error:', uploadError);
+              // Here you could also send to error tracking service
+            }}
+            onRetry={(documentId, file) => {
+              const document = expectedDocuments.find(d => d.id === documentId);
+              if (document) {
+                handleFileUploadWithType(file, documentId, document.document_type);
+              }
+            }}
+            onUploadStart={(documentId, file) => {
+              // Optimistically update the expected documents state
+              setExpectedDocuments(prev => prev.map(doc => 
+                doc.id === documentId 
+                  ? { 
+                      ...doc, 
+                      upload_status: 'processing',
+                      uploaded_file: {
+                        fileName: file.name,
+                        fileSize: file.size,
+                        uploadDate: new Date().toISOString(),
+                        processingStatus: 'uploading'
+                      }
+                    }
+                  : doc
+              ));
+            }}
+            maxRetries={3}
+          />
         </Box>
       )}
 
-      {/* Main Drop Zone */}
-      <Paper
+      {/* Loading State for Expected Documents */}
+      {loadingExpectedDocs && (
+        <Box sx={{ textAlign: 'center', py: 4 }}>
+          <Typography variant="body2" color="text.secondary">
+            Loading expected documents...
+            {retryCount > 0 && (
+              <Typography variant="caption" sx={{ display: 'block', mt: 1 }} color="warning.main">
+                Retry attempt {retryCount}/{maxFetchRetries}
+              </Typography>
+            )}
+          </Typography>
+        </Box>
+      )}
+
+      {/* Error State for Expected Documents */}
+      {fetchError && !loadingExpectedDocs && (
+        <Alert 
+          severity="warning" 
+          sx={{ mb: 2 }}
+          action={
+            <Button
+              size="small"
+              onClick={handleRetryFetch}
+              variant="outlined"
+              color="warning"
+            >
+              Retry
+            </Button>
+          }
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            Failed to load document requirements
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 0.5 }}>
+            {fetchError}
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 1 }}>
+            Using standard upload mode instead. You can manually set document types after upload.
+          </Typography>
+        </Alert>
+      )}
+
+      {/* Standard Drop Zone (Non-package mode or no expected documents) */}
+      {!useDocumentSlots && !loadingExpectedDocs && (
+        <>
+          {/* Main Drop Zone */}
+          <Paper
         {...getRootProps()}
         sx={{
           p: 3,
@@ -361,6 +596,8 @@ export const ContextualDropZone: React.FC<ContextualDropZoneProps> = ({
             </Box>
           ))}
         </Box>
+      )}
+        </>
       )}
     </Box>
   );

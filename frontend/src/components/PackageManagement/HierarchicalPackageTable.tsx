@@ -27,14 +27,14 @@ import {
   CellContext
 } from '@tanstack/react-table';
 import {
-  ChevronRightIcon,
-  ChevronDownIcon,
-  FolderIcon,
-  FolderOpenIcon,
-  DocumentIcon,
-  EllipsisHorizontalIcon,
-  PlusIcon
-} from '@heroicons/react/24/outline';
+  ChevronRight as ChevronRightIcon,
+  ExpandMore as ChevronDownIcon,
+  Folder as FolderIcon,
+  FolderOpen as FolderOpenIcon,
+  Description as DocumentIcon,
+  MoreHoriz as EllipsisHorizontalIcon,
+  Add as PlusIcon
+} from '@mui/icons-material';
 import { 
   PackageHierarchyItem, 
   PackageSelectionContext, 
@@ -47,12 +47,11 @@ import { v4 as uuidv4 } from 'uuid';
 interface HierarchicalPackageTableProps {
   hierarchyData: PackageHierarchyItem[];
   onSelectionChange: (context: PackageSelectionContext) => void;
-  onAddCategory: (type: string, name: string) => void;
-  onAddProduct: (categoryId: string, name: string) => void;
+  onAddCategory: (type: string, name: string, description?: string) => void;
+  onAddProduct: (categoryId: string, name: string, description?: string) => void;
   onFileAction: (fileId: string, action: string) => void;
   onDocumentTypeChange: (fileId: string, documentType: 'Guidelines' | 'Matrix' | 'Supporting' | 'Other') => void;
   selectionContext: PackageSelectionContext;
-  packageModeEnabled: boolean;
 }
 
 export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> = ({
@@ -62,8 +61,7 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
   onAddProduct,
   onFileAction,
   onDocumentTypeChange,
-  selectionContext,
-  packageModeEnabled
+  selectionContext
 }) => {
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [selectedRows, setSelectedRows] = useState<Record<string, boolean>>({});
@@ -124,11 +122,11 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
 
   const getRowIcon = (item: PackageHierarchyItem, isExpanded: boolean) => {
     if (item.type === 'category') {
-      return isExpanded ? <FolderOpenIcon className="w-4 h-4" /> : <FolderIcon className="w-4 h-4" />;
+      return isExpanded ? <FolderOpenIcon sx={{ width: 16, height: 16 }} /> : <FolderIcon sx={{ width: 16, height: 16 }} />;
     } else if (item.type === 'product') {
-      return <FolderIcon className="w-4 h-4" style={{ opacity: 0.7 }} />;
+      return <FolderIcon sx={{ width: 16, height: 16, opacity: 0.7 }} />;
     } else {
-      return <DocumentIcon className="w-4 h-4" />;
+      return <DocumentIcon sx={{ width: 16, height: 16 }} />;
     }
   };
 
@@ -185,7 +183,7 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
                 }}
                 style={{ padding: '2px' }}
               >
-                {isExpanded ? <ChevronDownIcon className="w-3 h-3" /> : <ChevronRightIcon className="w-3 h-3" />}
+                {isExpanded ? <ChevronDownIcon sx={{ width: 12, height: 12 }} /> : <ChevronRightIcon sx={{ width: 12, height: 12 }} />}
               </IconButton>
             )}
             
@@ -327,15 +325,12 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
                 variant="outlined"
                 onClick={(e) => {
                   e.stopPropagation();
-                  // This would open a quick product creator
-                  const productName = prompt('Product name:');
-                  if (productName) {
-                    onAddProduct(item.id, productName);
-                  }
+                  // Select the category to trigger the UI flow for adding a product
+                  handleRowSelect(info.row);
                 }}
               >
-                <PlusIcon className="w-3 h-3" style={{ marginRight: '4px' }} />
-                Add Product
+                <PlusIcon sx={{ width: 12, height: 12, marginRight: 0.5 }} />
+                Add
               </Button>
             )}
             
@@ -349,7 +344,7 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
                   }}
                   title="View file details"
                 >
-                  <DocumentIcon className="w-4 h-4" />
+                  <DocumentIcon sx={{ width: 16, height: 16 }} />
                 </IconButton>
                 <IconButton
                   size="small"
@@ -359,7 +354,7 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
                   }}
                   title="More actions"
                 >
-                  <EllipsisHorizontalIcon className="w-4 h-4" />
+                  <EllipsisHorizontalIcon sx={{ width: 16, height: 16 }} />
                 </IconButton>
               </>
             )}
@@ -384,26 +379,6 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
     getRowId: (row) => row.id,
   });
 
-  if (!packageModeEnabled) {
-    return (
-      <Box 
-        display="flex" 
-        flexDirection="column" 
-        alignItems="center" 
-        justifyContent="center"
-        p={4}
-        textAlign="center"
-      >
-        <FolderIcon style={{ fontSize: 64, opacity: 0.3 }} />
-        <Typography variant="h6" color="text.secondary" style={{ marginTop: 16 }}>
-          Standard File Mode
-        </Typography>
-        <Typography variant="body-medium" color="text.secondary">
-          Enable Package Mode to create hierarchical document structures
-        </Typography>
-      </Box>
-    );
-  }
 
   if (hierarchyData.length === 0) {
     return (
@@ -432,7 +407,7 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
             }
           }}
         >
-          <PlusIcon className="w-4 h-4" style={{ marginRight: '8px' }} />
+          <PlusIcon sx={{ width: 16, height: 16, marginRight: 1 }} />
           Add First Category
         </Button>
       </Box>
@@ -440,7 +415,7 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
   }
 
   return (
-    <Box>
+    <Box sx={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
       <DataGrid
         tableInstance={table}
         isResizable={true}
@@ -453,7 +428,8 @@ export const HierarchicalPackageTable: React.FC<HierarchicalPackageTableProps> =
           style: {
             height: '100%',
             width: '100%',
-            minHeight: '300px'
+            flex: 1,
+            minHeight: 0 // Allow flex to control height
           }
         }}
         components={{
